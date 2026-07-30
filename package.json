@@ -1,0 +1,11 @@
+{
+  "name": "tokyo-disney-guide",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "도쿄 디즈니랜드(TDL)·디즈니씨(TDS) 현장용 모바일 웹앱 (Leaflet + OpenStreetMap, PWA)",
+  "scripts": {
+    "validate": "node scripts/validate.mjs",
+    "serve": "node scripts/serve.mjs"
+  }
+}

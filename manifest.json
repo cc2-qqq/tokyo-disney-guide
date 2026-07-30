@@ -1,0 +1,17 @@
+{
+  "name": "도쿄 디즈니 현장 가이드 (TDL·TDS)",
+  "short_name": "디즈니 가이드",
+  "description": "도쿄 디즈니랜드·디즈니씨 현장용 모바일 가이드. 어트랙션, 화장실, 아이 키별 탑승, 현재 위치, 방향 안내.",
+  "lang": "ko",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e1621",
+  "theme_color": "#0b6bcb",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
