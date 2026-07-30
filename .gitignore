@@ -1,0 +1,15 @@
+# Official Disney PDF maps — local research reference ONLY.
+# Do NOT commit, publish, or deploy these (copyright).
+TDL_map_kr.pdf
+TDS_map_kr.pdf
+*.pdf
+
+# Research screenshots / scratch (local only)
+research/
+*.tmp
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+node_modules/
