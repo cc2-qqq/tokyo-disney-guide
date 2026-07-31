@@ -37,8 +37,18 @@ export function getPois(parkId) {
   ];
 }
 
+// Attractions currently operating (used for the map + attractions list).
 export function getAttractions(parkId) {
+  return getPois(parkId).filter((p) => p.type === 'attraction' && (p.operatingStatus || 'operating') === 'operating');
+}
+
+// All attractions incl. long-term-closed (used for search + detail lookup).
+export function getAllAttractions(parkId) {
   return getPois(parkId).filter((p) => p.type === 'attraction');
+}
+
+export function getArchivedAttractions(parkId) {
+  return getPois(parkId).filter((p) => p.type === 'attraction' && (p.operatingStatus || 'operating') !== 'operating');
 }
 
 // Facility POIs = restrooms, baby care/nursing, emergency.

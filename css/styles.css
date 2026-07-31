@@ -191,6 +191,14 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 .badge-medium { background: rgba(178,106,0,.15); color: var(--warn); border-color: rgba(178,106,0,.4); }
 .badge-low { background: rgba(120,120,120,.16); color: var(--text-2); border-color: var(--border); }
 .badge-unknown { background: rgba(192,57,43,.14); color: var(--no); }
+.badge-closed { background: rgba(192,57,43,.16); color: var(--no); border-color: rgba(192,57,43,.5); font-weight: 700; }
+
+.closed-banner { background: rgba(192,57,43,.12); border: 1px solid rgba(192,57,43,.45); border-radius: 12px; padding: 12px; margin: 10px 0; }
+.closed-banner strong { color: var(--no); display: block; margin-bottom: 4px; }
+.closed-banner p { margin: 4px 0; font-size: 14px; }
+.closed-banner a { color: var(--primary); }
+.closure-warn { background: rgba(178,106,0,.12); border-color: rgba(178,106,0,.5); }
+.closure-warn strong { color: var(--warn); }
 
 .empty, .notice { padding: 16px; color: var(--text-2); text-align: left; font-size: 14px; }
 .notice { background: var(--surface-2); border-radius: 10px; margin: 8px 0; }

@@ -7,7 +7,10 @@ const KEY = {
   visitList: 'tdg:visitList',
   done: 'tdg:done',
   settings: 'tdg:settings',
+  visitDate: 'tdg:visitDate',
 };
+
+const DEFAULT_VISIT_DATE = '2026-08-10';
 
 function read(key, fallback) {
   try {
@@ -86,4 +89,10 @@ export const store = {
 
   getSettings() { return { ...DEFAULT_SETTINGS, ...read(KEY.settings, {}) }; },
   setSettings(s) { write(KEY.settings, { ...this.getSettings(), ...s }); },
+
+  getVisitDate() {
+    const v = read(KEY.visitDate, DEFAULT_VISIT_DATE);
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : DEFAULT_VISIT_DATE;
+  },
+  setVisitDate(d) { if (/^\d{4}-\d{2}-\d{2}$/.test(d)) write(KEY.visitDate, d); },
 };

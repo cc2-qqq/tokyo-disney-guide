@@ -1,4 +1,5 @@
-import { PARKS, getPois, getAttractions, getFacilities, getPoiById } from './data/index.js';
+import { PARKS, getPois, getAttractions, getAllAttractions, getFacilities, getPoiById } from './data/index.js';
+import { closureOnDate } from './labels.js';
 import { store } from './store.js';
 import { createMapController } from './map.js';
 import { createLocator, haversineMeters, bearingDegrees, formatDistance } from './geo.js';
@@ -65,6 +66,14 @@ function directionFor(poi) {
     distance: haversineMeters(state.user.coords, poi.coordinates),
     bearing: bearingDegrees(state.user.coords, poi.coordinates),
   };
+}
+
+// Tag attractions with a closure that overlaps the saved visit date (for list badges).
+function annotateClosure(pois) {
+  const vd = store.getVisitDate();
+  return pois.map((p) => (p.type === 'attraction'
+    ? { ...p, _closedOnVisit: closureOnDate(p, vd) }
+    : p));
 }
 
 function toast(msg, ms = 2600) {
@@ -135,11 +144,16 @@ function listCtx() {
   return { isFavorite: (id) => store.isFavorite(id) };
 }
 
+function closedVisitBadge(closure) {
+  return closure ? '<span class="badge badge-closed">방문일 휴장</span>' : '';
+}
+
 function renderAttractions() {
   const f = getFilters().attraction;
   let items = getAttractions(state.park).filter((p) => matchText(p, state.query) && attractionMatchesFilters(p, f, { isFavorite: (id) => store.isFavorite(id) }));
   items = withDistance(items, state.user && state.user.coords);
   if (f.nearest) items = sortByDistance(items);
+  items = annotateClosure(items);
   els.sheetTitle.textContent = `어트랙션 (${items.length})`;
   els.sheetBody.innerHTML = attractionFilterBar(f) + ui.listHtml(items, {
     isFav: (id) => store.isFavorite(id),
@@ -169,7 +183,8 @@ function renderFavorites() {
   const favIds = store.getFavorites();
   const all = getPois(state.park);
   let favs = all.filter((p) => favIds.includes(p.id));
-  favs = withDistance(favs, state.user && state.user.coords);
+  favs = annotateClosure(withDistance(favs, state.user && state.user.coords));
+  const vd = store.getVisitDate();
   const visitIds = store.getVisitList();
   const visitItems = visitIds.map((id) => getPoiById(state.park, id)).filter(Boolean);
 
@@ -187,8 +202,11 @@ function renderFavorites() {
   } else {
     body += `<ol class="visit-list">${visitItems.map((p, i) => {
       const done = store.isDone(p.id);
+      const closedLong = p.operatingStatus === 'closed_longterm';
+      const closedVisit = p.type === 'attraction' && closureOnDate(p, vd);
+      const cbadge = closedLong ? '<span class="badge badge-closed">운영 종료</span>' : (closedVisitBadge(closedVisit));
       return `<li class="visit-row ${done ? 'is-done' : ''}">
-        <button class="vbtn" data-poi="${ui.esc(p.id)}" type="button">${ui.esc(p.nameKo || p.name)}</button>
+        <button class="vbtn" data-poi="${ui.esc(p.id)}" type="button">${ui.esc(p.nameKo || p.name)} ${cbadge}</button>
         <span class="visit-ctrls">
           <button class="iconbtn" data-visit-up="${ui.esc(p.id)}" type="button" aria-label="위로" ${i === 0 ? 'disabled' : ''}>\u2191</button>
           <button class="iconbtn" data-visit-down="${ui.esc(p.id)}" type="button" aria-label="아래로" ${i === visitItems.length - 1 ? 'disabled' : ''}>\u2193</button>
@@ -218,6 +236,12 @@ function renderSettings() {
     <button class="btn" id="child-add" type="button">+ 아이 추가</button>
     <button class="btn btn-primary" id="child-save" type="button">저장</button>
 
+    <h3 class="sheet-h3">방문 예정일</h3>
+    <div class="child-row">
+      <input class="inp" id="set-visitdate" type="date" value="${ui.esc(store.getVisitDate())}" aria-label="방문 예정일" />
+    </div>
+    <p class="muted small">이 날짜에 <strong>공식 사전 발표 휴장</strong>과 겹치는 어트랙션에 경고를 표시합니다. 실시간 운휴는 공식 앱에서 확인하세요.</p>
+
     <h3 class="sheet-h3">지도 표시</h3>
     <label class="switch-row">
       <input type="checkbox" id="set-estimated" ${s.includeEstimated ? 'checked' : ''} />
@@ -230,10 +254,16 @@ function renderSettings() {
       ${['auto', 'light', 'dark'].map((t) => `<button class="chip ${s.theme === t ? 'chip-on' : ''}" data-theme="${t}" type="button">${t === 'auto' ? '자동' : t === 'light' ? '밝게' : '어둡게'}</button>`).join('')}
     </div>
 
+    <h3 class="sheet-h3">오프라인 사용 안내</h3>
+    <div class="notice">
+      <p>출국 전에 TDL과 TDS 지도를 열고 주요 구역을 확대해 두면 일부 지도 타일을 오프라인에서도 볼 수 있습니다. 지도 타일이 없더라도 목록과 저장 정보는 사용할 수 있습니다.</p>
+    </div>
+
     <h3 class="sheet-h3">데이터 현황</h3>
     <div class="notice">
-      <p><strong>TDL</strong> 화장실 9곳 위치 확인(대략 5~10m), 추가 검증 4곳(추정), 미확인 1곳(비표시). 중앙구호실 1곳.</p>
+      <p><strong>TDL</strong> 화장실 9곳 지도 기반 추정(대략 5~10m), 추가 검증 4곳, 미확인 1곳(비표시). 중앙구호실 1곳.</p>
       <p><strong>TDS</strong> 화장실·응급시설 검증 좌표 준비 중(미표시). 어트랙션 위치는 대략적 추정입니다.</p>
+      <p><strong>운영 종료·장기 휴장</strong> 스페이스 마운틴·버즈 라이트이어(TDL), 머메이드 라군 시어터(TDS)는 기본 목록·지도에서 제외했습니다.</p>
       <p class="small">모든 좌표는 실측 GPS가 아니며 참고용입니다. 실시간 대기시간·운영 여부는 공식 앱에서 확인하세요.</p>
     </div>`;
 }
@@ -251,7 +281,7 @@ function renderDetail(id) {
     direction: directionFor(withArea),
   };
   if (withArea.type === 'attraction') {
-    els.sheetBody.innerHTML = ui.attractionDetail(withArea, { children: store.getChildren(), ...common });
+    els.sheetBody.innerHTML = ui.attractionDetail(withArea, { children: store.getChildren(), visitDate: store.getVisitDate(), ...common });
   } else {
     els.sheetBody.innerHTML = ui.facilityDetail(withArea, common);
   }
@@ -259,10 +289,11 @@ function renderDetail(id) {
 
 function renderSearch() {
   const q = state.query;
-  const atts = getAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, { isFavorite: (id) => store.isFavorite(id) }));
+  const atts = getAllAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, { isFavorite: (id) => store.isFavorite(id) }));
   const facs = visibleFacilities().filter((p) => matchText(p, q));
   let items = withDistance([...atts, ...facs], state.user && state.user.coords);
   if (getFilters().attraction.nearest || getFilters().facility.nearest) items = sortByDistance(items);
+  items = annotateClosure(items);
   els.sheetTitle.textContent = q ? `"${q}" 검색 결과 (${items.length})` : '검색';
   els.sheetBody.innerHTML = (q ? '' : `<p class="muted small">한국어·일본어·영어 이름, 구역, 시설 종류로 검색할 수 있어요.</p>`)
     + ui.listHtml(items, { isFav: (id) => store.isFavorite(id), emptyMsg: '검색 결과가 없습니다.' });
@@ -525,6 +556,10 @@ function bindEvents() {
   });
   els.sheetBody.addEventListener('change', (e) => {
     if (e.target.id === 'set-estimated') { store.setSettings({ includeEstimated: e.target.checked }); renderMap(); }
+    if (e.target.id === 'set-visitdate') {
+      store.setVisitDate(e.target.value);
+      toast(`방문 예정일: ${e.target.value}`);
+    }
   });
 
   window.addEventListener('online', updateOnline);

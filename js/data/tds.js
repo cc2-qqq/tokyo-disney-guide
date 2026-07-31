@@ -47,7 +47,10 @@ export const TDS_ATTRACTIONS = [
   a('tds-a-jellyfish', 'mermaid-lagoon', '점핑 젤리피시', 'ジャンピン・ジェリーフィッシュ', 'Jumpin\u2019 Jellyfish', [35.62535, 139.88615], 81, 'official', { indoor: false, kid: true, rainy: false }),
   a('tds-a-scuttle', 'mermaid-lagoon', '스커틀의 스쿠터', 'スカットルのスクーター', 'Scuttle\u2019s Scooters', [35.62545, 139.88600], null, 'none', { indoor: false, kid: true, rainy: false }),
   a('tds-a-blowfish', 'mermaid-lagoon', '블로피시 벌룬 레이스', 'ブローフィッシュ・バルーンレース', 'Blowfish Balloon Race', [35.62525, 139.88580], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tds-a-mermaidtheater', 'mermaid-lagoon', '머메이드 라군 시어터', 'マーメイドラグーンシアター', 'Mermaid Lagoon Theater', [35.62505, 139.88585], null, 'none', { indoor: true, kid: true, rainy: true }),
+  a('tds-a-mermaidtheater', 'mermaid-lagoon', '머메이드 라군 시어터', 'マーメイドラグーンシアター', 'Mermaid Lagoon Theater', [35.62505, 139.88585], null, 'none', { indoor: true, kid: true, rainy: true }, '2020년 7월 1일부터 휴장 중이며 재개 시기는 미정(TBD)입니다.', {
+    operatingStatus: 'closed_longterm',
+    closedInfo: { since: '2020-07-01', reopen: '미정(TBD)', reason: '장기 휴장', sourceUrl: 'https://www.tokyodisneyresort.jp/en/tds/attraction/detail/221/', checkedAt: '2026-07-31' },
+  }),
   a('tds-a-arielplay', 'mermaid-lagoon', '아리엘의 플레이그라운드', 'アリエルのプレイグラウンド', 'Ariel\u2019s Playground', [35.62510, 139.88610], null, 'none', { indoor: true, kid: true, rainy: true }),
 
   // Mysterious Island
@@ -57,17 +60,26 @@ export const TDS_ATTRACTIONS = [
   // Fantasy Springs (2024 오픈)
   a('tds-a-frozen', 'fantasy-springs', '애나와 엘사의 프로즌 저니', 'アナとエルサのフローズンジャーニー', 'Anna and Elsa\u2019s Frozen Journey', [35.62950, 139.88820], null, 'none', { indoor: true, kid: true, rainy: true }),
   a('tds-a-rapunzel', 'fantasy-springs', '라푼젤의 랜턴 페스티벌', 'ラプンツェルのランタンフェスティバル', 'Rapunzel\u2019s Lantern Festival', [35.62920, 139.88860], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tds-a-peterpan', 'fantasy-springs', '피터팬의 네버랜드 어드벤처', 'ピーターパンのネバーランドアドベンチャー', 'Peter Pan\u2019s Never Land Adventure', [35.62890, 139.88880], null, 'unverified', { indoor: true, kid: true, rainy: true }, '키 제한 여부는 공식 도쿄디즈니리조트 자료에서 재확인이 필요합니다.'),
+  a('tds-a-peterpan', 'fantasy-springs', '피터팬의 네버랜드 어드벤처', 'ピーターパンのネバーランドアドベンチャー', 'Peter Pan\u2019s Never Land Adventure', [35.62890, 139.88880], 102, 'official', { indoor: true, kid: true, rainy: true }, '싱글라이더 대상. 아이를 무릎에 앉힐 수 없습니다.', {
+    heightSourceUrl: 'https://www.tokyodisneyresort.jp/en/tds/attraction/detail/257/',
+    heightCheckedAt: '2026-07-31',
+  }),
   a('tds-a-tinkerbell', 'fantasy-springs', '팅커벨의 비지 버기', 'ティンカーベルのビジーバギー', 'Tinker Bell\u2019s Busy Buggies', [35.62905, 139.88840], null, 'none', { indoor: true, kid: true, rainy: true }),
 ];
 
-function a(id, area, nameKo, nameJa, nameEn, coordinates, heightMin, heightStatus, tags = {}, notes = '') {
+function a(id, area, nameKo, nameJa, nameEn, coordinates, heightMin, heightStatus, tags = {}, notes = '', opts = {}) {
   return {
     id, park: 'TDS', area, type: 'attraction',
     nameKo, nameJa, nameEn,
     coordinates,
     heightMin: heightMin ?? null,
     heightStatus,
+    heightSourceUrl: opts.heightSourceUrl || null,
+    heightCheckedAt: opts.heightCheckedAt || null,
+    heightNote: opts.heightNote || null,
+    operatingStatus: opts.operatingStatus || 'operating',
+    closedInfo: opts.closedInfo || null,
+    closures: opts.closures || [],
     indoor: !!tags.indoor,
     thrill: !!tags.thrill,
     kidFriendly: !!tags.kid,
@@ -81,4 +93,23 @@ function a(id, area, nameKo, nameJa, nameEn, coordinates, heightMin, heightStatu
     source: '공식 PDF 포트 배치 + 파크 지리 기반 근사 위치',
     notes: notes || '어트랙션 위치는 대략적 추정이며 지도상 정확 좌표는 검증 예정입니다.',
   };
+}
+
+// Official closures (source: https://www.tokyodisneyresort.jp/en/tds/monthly/stop.html, checkedAt 2026-07-31).
+const TDS_SRC = 'https://www.tokyodisneyresort.jp/en/tds/monthly/stop.html';
+const CKS = '2026-07-31';
+const c = (startDate, endDate, note = '') => ({ startDate, endDate, closureType: 'refurbishment', sourceUrl: TDS_SRC, checkedAt: CKS, note });
+const TDS_CLOSURES = {
+  'tds-a-indiana': [c('2025-08-18', null, '장기 휴장(재개 미정)')],
+  'tds-a-carpet': [c('2026-07-28', '2026-08-10')],
+  'tds-a-steamer-med': [c('2026-08-04', '2026-11-30')],
+  'tds-a-fortress': [c('2026-07-01', '2026-09-14', '\u201c더 레오나르도 챌린지\u201d 프로그램 휴장 (요새 탐험 자체는 이용 가능할 수 있음)')],
+  'tds-a-flounder': [c('2026-08-12', '2026-08-26')],
+  'tds-a-scuttle': [c('2026-08-27', '2026-08-31')],
+  'tds-a-tot': [c('2026-09-28', '2026-11-05')],
+  'tds-a-magiclamp': [c('2026-12-08', '2026-12-22')],
+  'tds-a-center': [c('2027-01-08', '2027-03-08')],
+};
+for (const att of TDS_ATTRACTIONS) {
+  if (TDS_CLOSURES[att.id]) att.closures = TDS_CLOSURES[att.id];
 }

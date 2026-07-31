@@ -297,8 +297,14 @@ export const TDL_ATTRACTIONS = [
   a('tdl-a-meetmickey', 'toontown', '미키의 집과 미트 미키', 'ミッキーの家とミート・ミッキー', 'Mickey\u2019s House and Meet Mickey', [35.63030, 139.87940], null, 'none', { indoor: true, kid: true, rainy: true }),
 
   // Tomorrowland
-  a('tdl-a-space', 'tomorrowland', '스페이스 마운틴', 'スペース・マウンテン', 'Space Mountain', [35.63200, 139.87870], 102, 'official', { indoor: true, kid: false, thrill: true, rainy: true }, '리뉴얼 관련 휴장 여부는 공식 앱에서 확인하세요.'),
-  a('tdl-a-buzz', 'tomorrowland', '버즈 라이트이어의 애스트로 블래스터', 'バズ・ライトイヤーのアストロブラスター', 'Buzz Lightyear\u2019s Astro Blasters', [35.63235, 139.87905], null, 'none', { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-space', 'tomorrowland', '스페이스 마운틴', 'スペース・マウンテン', 'Space Mountain', [35.63200, 139.87870], 102, 'official', { indoor: true, kid: false, thrill: true, rainy: true }, '2024년 7월 31일 클로즈되어 재건축 중이며 2027년 새 어트랙션으로 오픈 예정입니다.', {
+    operatingStatus: 'closed_longterm',
+    closedInfo: { since: '2024-07-31', reopen: '2027', reason: '재건축(트루모로우랜드 재개발)', sourceUrl: 'https://www.tokyodisneyresort.jp/tdrblog/detail/pr220427/', checkedAt: '2026-07-31' },
+  }),
+  a('tdl-a-buzz', 'tomorrowland', '버즈 라이트이어의 애스트로 블래스터', 'バズ・ライトイヤーのアストロブラスター', 'Buzz Lightyear\u2019s Astro Blasters', [35.63235, 139.87905], null, 'none', { indoor: true, kid: true, rainy: true }, '2024년 10월 31일 영구 클로즈되었습니다. 자리에 렉잇 랄프 테마 어트랙션이 2027년경 오픈 예정입니다.', {
+    operatingStatus: 'closed_longterm',
+    closedInfo: { since: '2024-10-31', reopen: '2027(예정)', reason: '영구 종료 → 렉잇 랄프 신규 어트랙션', sourceUrl: 'https://www.tokyodisneyresort.jp/en/tdl/monthly/stop.html', checkedAt: '2026-07-31' },
+  }),
   a('tdl-a-monsters', 'tomorrowland', '몬스터 주식회사 라이드&고 시크!', 'モンスターズ・インク“ライド&ゴーシーク！”', 'Monsters, Inc. Ride & Go Seek!', [35.63250, 139.87880], null, 'none', { indoor: true, kid: true, rainy: true }),
   a('tdl-a-stitch', 'tomorrowland', '스티치 인카운터', 'スティッチ・エンカウンター', 'Stitch Encounter', [35.63225, 139.87890], null, 'none', { indoor: true, kid: true, rainy: true }),
   a('tdl-a-baymax', 'tomorrowland', '베이맥스의 해피 라이드', 'ベイマックスのハッピーライド', 'Baymax\u2019s Happy Ride', [35.63145, 139.87890], null, 'none', { indoor: false, kid: true, rainy: false }),
@@ -306,13 +312,19 @@ export const TDL_ATTRACTIONS = [
 ];
 
 // factory: keeps attraction records compact + consistent.
-function a(id, area, nameKo, nameJa, nameEn, coordinates, heightMin, heightStatus, tags = {}, notes = '') {
+function a(id, area, nameKo, nameJa, nameEn, coordinates, heightMin, heightStatus, tags = {}, notes = '', opts = {}) {
   return {
     id, park: 'TDL', area, type: 'attraction',
     nameKo, nameJa, nameEn,
     coordinates,
     heightMin: heightMin ?? null,
     heightStatus, // 'official' | 'none' | 'unverified'
+    heightSourceUrl: opts.heightSourceUrl || null,
+    heightCheckedAt: opts.heightCheckedAt || null,
+    heightNote: opts.heightNote || null,
+    operatingStatus: opts.operatingStatus || 'operating', // 'operating' | 'closed_longterm'
+    closedInfo: opts.closedInfo || null,
+    closures: opts.closures || [],
     indoor: !!tags.indoor,
     thrill: !!tags.thrill,
     kidFriendly: !!tags.kid,
@@ -326,4 +338,32 @@ function a(id, area, nameKo, nameJa, nameEn, coordinates, heightMin, heightStatu
     source: '공식 PDF 랜드 배치 + 검증된 화장실 좌표 앵커 기반 근사 위치',
     notes: notes || '어트랙션 위치는 대략적 추정이며 지도상 정확 좌표는 검증 예정입니다.',
   };
+}
+
+// Official refurbishment/closure periods (source: official Temporary Closure of Park Facilities,
+// https://www.tokyodisneyresort.jp/en/tdl/monthly/stop.html, checkedAt 2026-07-31).
+// endDate null = TBD/미정. These are pre-announced closures, NOT real-time suspensions.
+const TDL_SRC = 'https://www.tokyodisneyresort.jp/en/tdl/monthly/stop.html';
+const CK = '2026-07-31';
+const c = (startDate, endDate, note = '') => ({ startDate, endDate, closureType: 'refurbishment', sourceUrl: TDL_SRC, checkedAt: CK, note });
+const TDL_CLOSURES = {
+  'tdl-a-smallworld': [c('2026-06-29', '2026-08-03')],
+  'tdl-a-pooh': [c('2026-06-30', '2026-08-28')],
+  'tdl-a-monsters': [c('2026-07-01', '2026-07-31')],
+  'tdl-a-canoe': [c('2026-07-01', '2026-09-14')],
+  'tdl-a-wrr': [c('2026-08-04', '2026-08-24')],
+  'tdl-a-haunted': [c('2026-08-04', '2026-09-14'), c('2027-01-08', '2027-02-04')],
+  'tdl-a-alice': [c('2026-08-07', '2026-08-11')],
+  'tdl-a-carrousel': [c('2026-08-13', '2026-09-03')],
+  'tdl-a-snowwhite': [c('2026-09-04', '2026-09-22')],
+  'tdl-a-shootin': [c('2026-09-15', '2026-09-21')],
+  'tdl-a-baymax': [c('2026-09-15', '2026-09-29')],
+  'tdl-a-tiki': [c('2026-09-24', '2026-10-23')],
+  'tdl-a-stitch': [c('2026-11-02', '2026-11-30')],
+  'tdl-a-peterpan': [c('2027-01-06', '2027-02-02')],
+  'tdl-a-jungle': [c('2027-01-06', '2027-03-30')],
+  'tdl-a-splash': [c('2027-01-07', '2027-02-04')],
+};
+for (const att of TDL_ATTRACTIONS) {
+  if (TDL_CLOSURES[att.id]) att.closures = TDL_CLOSURES[att.id];
 }

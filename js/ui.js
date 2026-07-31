@@ -2,6 +2,7 @@
 import {
   COORD_STATUS_LABEL, COORD_STATUS_BADGE, ACCURACY_LABEL,
   TYPE_LABEL, confidenceBand, rideEligibility, heightTierLabel,
+  closureOnDate, formatDateKo, HEIGHT_MEASURE_NOTE,
 } from './labels.js';
 import { formatDistance, compass8, bearingDegrees } from './geo.js';
 
@@ -29,6 +30,9 @@ export function listItem(poi, { distance, isFav, isDone } = {}) {
   const dist = distance != null ? `<span class="li-dist">${esc(formatDistance(distance))}</span>` : '';
   const favMark = isFav ? '<span class="li-fav" aria-label="즐겨찾기됨">\u2605</span>' : '';
   const doneMark = isDone ? '<span class="li-done" aria-label="완료">\u2713</span>' : '';
+  let statusBadge = '';
+  if (poi.operatingStatus === 'closed_longterm') statusBadge = '<span class="badge badge-closed">운영 종료</span>';
+  else if (poi._closedOnVisit) statusBadge = '<span class="badge badge-closed">방문일 휴장</span>';
   return `
     <li>
       <button class="li" data-poi="${esc(poi.id)}" type="button">
@@ -37,7 +41,7 @@ export function listItem(poi, { distance, isFav, isDone } = {}) {
           <span class="li-name">${name} ${favMark}${doneMark}</span>
           <span class="li-meta">${area ? esc(area) + ' · ' : ''}${esc(TYPE_LABEL[poi.type] || '')}${sub ? ' · ' + sub : ''}</span>
         </span>
-        <span class="li-right">${dist}${badge(poi)}</span>
+        <span class="li-right">${dist}${statusBadge}${badge(poi)}</span>
       </button>
     </li>`;
 }
@@ -95,7 +99,29 @@ function actionRow(poi, { isFav, inVisit } = {}, canDirection) {
     </div>`;
 }
 
-export function attractionDetail(poi, { children, isFav, inVisit, distance, userCoords, direction }) {
+function closedBanner(poi) {
+  if (poi.operatingStatus !== 'closed_longterm') return '';
+  const info = poi.closedInfo || {};
+  return `<div class="closed-banner" role="status">
+      <strong>\u26D4 운영 종료 · 장기 휴장</strong>
+      <p>${esc(info.since ? formatDateKo(info.since) + '부터 ' : '')}휴장 중입니다${info.reopen ? ` (재개 ${esc(info.reopen)})` : ''}.${info.reason ? ' ' + esc(info.reason) + '.' : ''}</p>
+      <p class="small">기본 지도·목록에서는 제외되어 있습니다.${info.sourceUrl ? ` <a href="${esc(info.sourceUrl)}" target="_blank" rel="noopener">공식 안내</a>` : ''}</p>
+    </div>`;
+}
+
+function closureWarning(closure) {
+  if (!closure) return '';
+  const period = `${formatDateKo(closure.startDate)} ~ ${closure.endDate ? formatDateKo(closure.endDate) : '미정(TBD)'}`;
+  return `<div class="closed-banner closure-warn" role="status">
+      <strong>\u26A0\uFE0F 방문 예정일에는 공식 휴장 예정입니다.</strong>
+      <p>공식 휴장 기간: ${esc(period)}</p>
+      ${closure.note ? `<p class="small">${esc(closure.note)}</p>` : ''}
+      <p class="small">사전 발표된 휴장 정보입니다. 실시간 운휴 여부는 공식 앱에서 다시 확인해 주세요.${closure.sourceUrl ? ` <a href="${esc(closure.sourceUrl)}" target="_blank" rel="noopener">공식 안내</a>` : ''}</p>
+    </div>`;
+}
+
+export function attractionDetail(poi, { children, isFav, inVisit, distance, userCoords, direction, visitDate }) {
+  const closure = closureOnDate(poi, visitDate);
   const rides = (children || []).map((c) => {
     const r = rideEligibility(poi, c.height);
     return `<div class="ride-row ${r.cls}">
@@ -115,6 +141,8 @@ export function attractionDetail(poi, { children, isFav, inVisit, distance, user
           <p class="detail-sub">${esc(poi.nameJa || '')}${poi.nameJa && poi.nameEn ? ' · ' : ''}${esc(poi.nameEn || '')}</p>
         </div>
       </div>
+      ${closedBanner(poi)}
+      ${closureWarning(closure)}
       <div class="detail-tags">
         <span class="tag">${esc(poi.areaNameKo || '')}</span>
         <span class="tag">${esc(heightTierLabel(poi))}</span>
@@ -125,6 +153,7 @@ export function attractionDetail(poi, { children, isFav, inVisit, distance, user
 
       <h3 class="detail-h3">아이별 탑승 가능 여부</h3>
       <div class="ride-list">${rides || '<div class="empty">아이 프로필이 없습니다. 설정에서 추가해 주세요.</div>'}</div>
+      ${poi.heightMin != null && poi.heightStatus === 'official' ? `<p class="detail-note">\u2139\uFE0F ${esc(HEIGHT_MEASURE_NOTE)}${poi.heightSourceUrl ? ` <a href="${esc(poi.heightSourceUrl)}" target="_blank" rel="noopener">공식 키 제한 안내</a>` : ''}</p>` : ''}
 
       <div class="detail-grid">${distLine}</div>
       ${confChip(poi)}

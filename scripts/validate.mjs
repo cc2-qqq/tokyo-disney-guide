@@ -92,6 +92,25 @@ for (const parkId of PARK_IDS) {
       coordKeyByType.set(key, p.id);
     }
 
+    // operating status + closures (attractions)
+    if (p.type === 'attraction') {
+      const os = p.operatingStatus || 'operating';
+      if (!['operating', 'closed_longterm'].includes(os)) err(`${tag}: 알 수 없는 operatingStatus '${os}'`);
+      if (os === 'closed_longterm' && !p.closedInfo) warn(`${tag}: closed_longterm 인데 closedInfo 없음`);
+      if (Array.isArray(p.closures)) {
+        for (const cl of p.closures) {
+          const df = /^\d{4}-\d{2}-\d{2}$/;
+          if (!df.test(cl.startDate || '')) err(`${tag}: closure startDate 형식 오류 (${cl.startDate})`);
+          if (cl.endDate != null && !df.test(cl.endDate)) err(`${tag}: closure endDate 형식 오류 (${cl.endDate})`);
+          if (cl.endDate != null && cl.startDate > cl.endDate) err(`${tag}: closure 기간 역전 (${cl.startDate} > ${cl.endDate})`);
+          if (!cl.sourceUrl) warn(`${tag}: closure sourceUrl 없음 (${cl.startDate})`);
+        }
+      }
+      if (p.heightStatus === 'official' && p.heightMin != null && !p.heightSourceUrl) {
+        warn(`${tag}: official 키 제한인데 heightSourceUrl 없음`);
+      }
+    }
+
     // confidence band vs status sanity
     if (status === 'high_estimated' && p.confidenceScore != null && p.confidenceScore < 70 && p.type !== 'attraction') {
       warn(`${tag}: high_estimated 인데 confidenceScore ${p.confidenceScore} (<70)`);
