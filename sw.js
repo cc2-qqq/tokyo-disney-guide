@@ -1,6 +1,6 @@
 // Service worker: offline app shell + data caching. Relative paths keep it working
 // on GitHub Pages sub-paths (e.g. /tokyo-disney-guide/).
-const VERSION = 'tdg-v2';
+const VERSION = 'tdg-v3';
 const SHELL_CACHE = `${VERSION}-shell`;
 const TILE_CACHE = `${VERSION}-tiles`;
 const MAX_TILES = 400;
@@ -79,24 +79,24 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Same-origin shell/data: stale-while-revalidate.
+  // Same-origin shell/data: NETWORK-FIRST so deploys apply on the next online load,
+  // with cache fallback so everything still works offline.
   if (new URL(url).origin === self.location.origin) {
     e.respondWith((async () => {
       const cache = await caches.open(SHELL_CACHE);
-      const hit = await cache.match(req);
-      const fetching = fetch(req).then((res) => {
+      try {
+        const res = await fetch(req);
         if (res && res.ok) cache.put(req, res.clone());
         return res;
-      }).catch(() => null);
-      if (hit) return hit;
-      const net = await fetching;
-      if (net) return net;
-      // navigation fallback
-      if (req.mode === 'navigate') {
-        const idx = await cache.match('./index.html');
-        if (idx) return idx;
+      } catch {
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        if (req.mode === 'navigate') {
+          const idx = await cache.match('./index.html');
+          if (idx) return idx;
+        }
+        return new Response('오프라인 상태입니다.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
       }
-      return new Response('오프라인 상태입니다.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     })());
   }
 });

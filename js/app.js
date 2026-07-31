@@ -608,6 +608,16 @@ function init() {
   map.invalidate();
 
   if ('serviceWorker' in navigator) {
+    // Reload once when a NEW service worker takes control (so an updated deploy
+    // applies without a manual hard reload). Guarded so the first-ever install
+    // (no prior controller) does not trigger a reload loop.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded || !hadController) return;
+      reloaded = true;
+      window.location.reload();
+    });
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     });
