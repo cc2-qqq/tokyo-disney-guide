@@ -9,17 +9,38 @@ const ICONS = {
   emergencyFacility: { glyph: '\u271A', cls: 'm-firstaid', label: '응급시설' },
 };
 
+function escapeHtml(s) {
+  return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
 export function createMapController(elId) {
   let map = null;
   let tileLayer = null;
   const poiLayer = () => markerGroup;
   let markerGroup = null;
+  let labelGroup = null;
   let markers = new Map(); // id -> marker
   let userMarker = null;
   let accuracyCircle = null;
   let directionLine = null;
   let tileErrorShown = false;
   let onTileError = null;
+
+  // ---- Korean self-drawn label layer state ----
+  // Background tiles carry the raster (Japanese) labels faintly; these are the
+  // app's own Korean labels drawn on top so the map reads in Korean.
+  const labelState = {
+    parkMeta: null,
+    areas: [],
+    attractions: [],
+    facilities: [],
+    landmark: new Set(),
+    selectedId: null,
+    favIds: new Set(),
+    mapLang: 'ko', // 'ko' | 'ko-ja'
+  };
 
   function init(parkMeta, { onTileError: cb } = {}) {
     onTileError = cb;
@@ -31,6 +52,8 @@ export function createMapController(elId) {
       zoomControl: true,
       attributionControl: true,
     });
+    // OpenStreetMap raster kept (clear ODbL terms + offline-cache friendly).
+    // Rendered pale via CSS (#map .leaflet-tile-pane) so Korean overlay labels dominate.
     tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors',
@@ -43,11 +66,21 @@ export function createMapController(elId) {
       }
     });
     markerGroup = L.layerGroup().addTo(map);
+
+    // Dedicated non-interactive pane above markers for text labels.
+    map.createPane('labels');
+    const lp = map.getPane('labels');
+    lp.style.zIndex = 620;
+    lp.style.pointerEvents = 'none';
+    labelGroup = L.layerGroup().addTo(map);
+
+    map.on('zoomend moveend', renderLabels);
     return map;
   }
 
   function setPark(parkMeta) {
     tileErrorShown = false;
+    labelState.parkMeta = parkMeta;
     map.setView(parkMeta.center, parkMeta.zoom);
   }
 
@@ -145,11 +178,131 @@ export function createMapController(elId) {
     if (directionLine) { map.removeLayer(directionLine); directionLine = null; }
   }
 
-  function invalidate() { if (map) setTimeout(() => map.invalidateSize(), 50); }
+  // ---- Korean label layer ----
+  // Sources change on park switch / marker render; options change on select / fav / setting.
+  function setLabelSources({ parkMeta, areas, attractions, facilities, landmark }) {
+    if (parkMeta) labelState.parkMeta = parkMeta;
+    if (areas) labelState.areas = areas;
+    if (attractions) labelState.attractions = attractions;
+    if (facilities) labelState.facilities = facilities;
+    if (landmark) labelState.landmark = landmark instanceof Set ? landmark : new Set(landmark);
+    renderLabels();
+  }
+
+  function setLabelOptions({ selectedId, favIds, mapLang } = {}) {
+    if (selectedId !== undefined) labelState.selectedId = selectedId;
+    if (favIds !== undefined) labelState.favIds = favIds instanceof Set ? favIds : new Set(favIds || []);
+    if (mapLang !== undefined) labelState.mapLang = mapLang || 'ko';
+    renderLabels();
+  }
+
+  // Rough on-screen box for a label, used only for greedy overlap avoidance.
+  function labelBox(cp, text, kind, hasSub) {
+    const perChar = kind === 'area' ? 13 : 11;
+    const maxW = kind === 'area' ? 150 : 96;
+    const lineH = kind === 'area' ? 18 : 15;
+    const full = Math.min(maxW, Math.max(28, (text ? text.length : 0) * perChar) + 10);
+    const lines = ((text ? text.length : 0) * perChar > maxW ? 2 : 1) + (hasSub ? 1 : 0);
+    const h = lineH * lines + 6;
+    const offY = kind === 'area' || kind === 'park' ? 0 : 12; // attr/facility sit below the point
+    const cx = cp.x;
+    const cy = cp.y + offY + (kind === 'area' || kind === 'park' ? 0 : h / 2);
+    return { x1: cx - full / 2, y1: cy - h / 2, x2: cx + full / 2, y2: cy + h / 2 };
+  }
+
+  function overlaps(a, b, gap) {
+    return !(a.x2 + gap < b.x1 || a.x1 - gap > b.x2 || a.y2 + gap < b.y1 || a.y1 - gap > b.y2);
+  }
+
+  function buildCandidates(zoom) {
+    const s = labelState;
+    const out = [];
+    if (!s.parkMeta) return out;
+
+    if (zoom <= 15 && s.parkMeta.center) {
+      out.push({ key: '__park', kind: 'park', latlng: s.parkMeta.center, text: s.parkMeta.nameKo, sub: null, priority: 0 });
+    }
+    if (zoom >= 16) {
+      for (const ar of s.areas) {
+        if (!ar.labelCenter) continue;
+        out.push({ key: 'area:' + ar.id, kind: 'area', latlng: ar.labelCenter, text: ar.nameKo, sub: s.mapLang === 'ko-ja' ? ar.nameEn : null, priority: 2 });
+      }
+    }
+    const showRep = zoom >= 17;
+    const showAll = zoom >= 18;
+    for (const at of s.attractions) {
+      if (!at.coordinates) continue;
+      if ((at.operatingStatus || 'operating') !== 'operating') continue; // exclude closed/long-term
+      const isFav = s.favIds.has(at.id);
+      const isRep = s.landmark.has(at.id);
+      let include = false; let priority = 5;
+      if (isFav && zoom >= 16) { include = true; priority = 3; }
+      if (isRep && showRep) { include = true; priority = Math.min(priority, 4); }
+      if (showAll) { include = true; priority = Math.min(priority, 5); }
+      if (include) {
+        out.push({ key: 'at:' + at.id, kind: 'attr', latlng: at.coordinates, text: at.nameKo, sub: s.mapLang === 'ko-ja' ? at.nameJa : null, priority });
+      }
+    }
+    // Selected POI (attraction or facility) always shown, highest priority.
+    if (s.selectedId) {
+      const sel = s.attractions.find((a) => a.id === s.selectedId)
+        || s.facilities.find((f) => f.id === s.selectedId);
+      if (sel && sel.coordinates) {
+        out.push({
+          key: (sel.type === 'attraction' ? 'at:' : 'fac:') + sel.id,
+          kind: sel.type === 'attraction' ? 'attr' : 'facility',
+          latlng: sel.coordinates,
+          text: sel.nameKo || sel.name,
+          sub: s.mapLang === 'ko-ja' ? (sel.nameJa || null) : null,
+          priority: 1, selected: true,
+        });
+      }
+    }
+    // de-dup by key, keep the lowest-priority (most important) instance
+    const byKey = new Map();
+    for (const c of out) {
+      const prev = byKey.get(c.key);
+      if (!prev || c.priority < prev.priority) byKey.set(c.key, prev ? { ...c, selected: c.selected || prev.selected } : c);
+    }
+    return [...byKey.values()];
+  }
+
+  function labelIcon(c) {
+    const cls = c.kind === 'area' ? 'map-label-area'
+      : c.kind === 'park' ? 'map-label-park'
+        : c.kind === 'facility' ? 'map-label-facility' : 'map-label-attr';
+    const selCls = c.selected ? ' is-selected' : '';
+    const sub = c.sub ? `<span class="ml-sub">${escapeHtml(c.sub)}</span>` : '';
+    const html = `<span class="map-label ${cls}${selCls}"><span class="ml-main">${escapeHtml(c.text)}</span>${sub}</span>`;
+    return L.divIcon({ html, className: 'map-label-wrap', iconSize: [0, 0], iconAnchor: [0, 0] });
+  }
+
+  function renderLabels() {
+    if (!map || !labelGroup) return;
+    labelGroup.clearLayers();
+    const zoom = map.getZoom();
+    const cands = buildCandidates(zoom).sort((a, b) => a.priority - b.priority);
+    const placed = [];
+    const bounds = map.getBounds().pad(0.05);
+    for (const c of cands) {
+      const ll = L.latLng(c.latlng[0], c.latlng[1]);
+      if (!bounds.contains(ll)) continue;
+      const cp = map.latLngToContainerPoint(ll);
+      const box = labelBox(cp, c.text, c.kind, !!c.sub);
+      let hit = false;
+      for (const p of placed) { if (overlaps(box, p, 2)) { hit = true; break; } }
+      if (hit) continue;
+      placed.push(box);
+      L.marker(ll, { icon: labelIcon(c), pane: 'labels', interactive: false, keyboard: false }).addTo(labelGroup);
+    }
+  }
+
+  function invalidate() { if (map) setTimeout(() => { map.invalidateSize(); renderLabels(); }, 50); }
 
   return {
     init, setPark, renderMarkers, highlight, focusPoi,
     setUserLocation, centerOnUser, showDirection, clearDirection, invalidate,
+    setLabelSources, setLabelOptions, renderLabels,
     getMap: () => map,
   };
 }

@@ -115,6 +115,72 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
   border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(26,115,232,.4);
 }
 
+/* ---------- Pale background tiles (so Korean overlay labels dominate) ---------- */
+/* Uniform dimming of the whole basemap — not selective glyph hiding. */
+#map .leaflet-tile-pane { filter: saturate(.82) brightness(1.05); opacity: .6; }
+
+/* ---------- Korean self-drawn map labels ---------- */
+.map-label-wrap { background: none; border: 0; }
+.map-label {
+  position: absolute; left: 0; top: 0; pointer-events: none;
+  width: max-content; word-break: keep-all;
+  text-align: center; font-weight: 800; line-height: 1.15; letter-spacing: -.2px;
+  color: #10202e;
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 4px #fff, 0 1px 2px rgba(255,255,255,.95);
+}
+.map-label .ml-main { display: block; }
+.map-label .ml-sub { display: block; font-weight: 600; font-size: .8em; opacity: .82; }
+
+.map-label-attr, .map-label-facility {
+  transform: translate(-50%, 10px); font-size: 12px; max-width: 96px; overflow-wrap: anywhere;
+}
+.map-label-facility { color: #14622c; max-width: 118px; }
+.map-label-park {
+  transform: translate(-50%, -50%); font-size: 20px; letter-spacing: 0; color: #0b3f6b;
+}
+.map-label-area {
+  transform: translate(-50%, -50%); font-size: 14px; max-width: 150px; overflow-wrap: anywhere;
+  color: #0b3f6b; background: rgba(255,255,255,.64); border: 1px solid rgba(11,107,203,.28);
+  border-radius: 9px; padding: 2px 8px;
+}
+.map-label-attr.is-selected, .map-label-facility.is-selected {
+  color: #0b6bcb; background: rgba(255,255,255,.9);
+  border-radius: 7px; padding: 1px 6px; box-shadow: 0 1px 5px rgba(0,0,0,.22);
+}
+
+:root[data-theme="dark"] #map .leaflet-tile-pane { filter: grayscale(.35) brightness(.52) contrast(.95); opacity: .5; }
+:root[data-theme="dark"] .map-label {
+  color: #eaf1f8;
+  text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 5px #000, 0 1px 2px rgba(0,0,0,.95);
+}
+:root[data-theme="dark"] .map-label-park,
+:root[data-theme="dark"] .map-label-area { color: #cfe3f7; }
+:root[data-theme="dark"] .map-label-facility { color: #7ee0a0; }
+:root[data-theme="dark"] .map-label-area {
+  background: rgba(24,36,48,.66); border-color: rgba(61,146,240,.4);
+}
+:root[data-theme="dark"] .map-label-attr.is-selected,
+:root[data-theme="dark"] .map-label-facility.is-selected {
+  color: #7bb8f5; background: rgba(24,36,48,.9);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #map .leaflet-tile-pane { filter: grayscale(.35) brightness(.52) contrast(.95); opacity: .5; }
+  :root:not([data-theme="light"]) .map-label {
+    color: #eaf1f8;
+    text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 5px #000, 0 1px 2px rgba(0,0,0,.95);
+  }
+  :root:not([data-theme="light"]) .map-label-park,
+  :root:not([data-theme="light"]) .map-label-area { color: #cfe3f7; }
+  :root:not([data-theme="light"]) .map-label-facility { color: #7ee0a0; }
+  :root:not([data-theme="light"]) .map-label-area {
+    background: rgba(24,36,48,.66); border-color: rgba(61,146,240,.4);
+  }
+  :root:not([data-theme="light"]) .map-label-attr.is-selected,
+  :root:not([data-theme="light"]) .map-label-facility.is-selected {
+    color: #7bb8f5; background: rgba(24,36,48,.9);
+  }
+}
+
 /* ---------- Bottom nav ---------- */
 #bottomnav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 1100;

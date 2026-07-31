@@ -37,6 +37,7 @@ const DEFAULT_CHILDREN = [
 const DEFAULT_SETTINGS = {
   includeEstimated: false, // 추정 위치(low) 표시 여부
   theme: 'auto', // 'auto' | 'light' | 'dark'
+  mapLang: 'ko', // 'ko' (한국어 중심) | 'ko-ja' (한국어 + 일본어 보조)
 };
 
 export const store = {

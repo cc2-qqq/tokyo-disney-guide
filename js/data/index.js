@@ -1,4 +1,4 @@
-import { PARKS, PARK_IDS } from './parks.js';
+import { PARKS, PARK_IDS, LANDMARK_ATTRACTIONS, isLandmark } from './parks.js';
 import { TDL_ATTRACTIONS, TDL_RESTROOMS, TDL_EMERGENCY, TDL_BABYCARE } from './tdl.js';
 import { TDS_ATTRACTIONS, TDS_RESTROOMS, TDS_EMERGENCY, TDS_BABYCARE } from './tds.js';
 
@@ -17,7 +17,7 @@ const DATA = {
   },
 };
 
-export { PARKS, PARK_IDS };
+export { PARKS, PARK_IDS, LANDMARK_ATTRACTIONS, isLandmark };
 
 export function getParkMeta(parkId) {
   return PARKS[parkId];

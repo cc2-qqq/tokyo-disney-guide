@@ -1,4 +1,4 @@
-import { PARKS, getPois, getAttractions, getAllAttractions, getFacilities, getPoiById } from './data/index.js';
+import { PARKS, getPois, getAttractions, getAllAttractions, getFacilities, getPoiById, LANDMARK_ATTRACTIONS } from './data/index.js';
 import { closureOnDate } from './labels.js';
 import { store } from './store.js';
 import { createMapController } from './map.js';
@@ -87,6 +87,25 @@ function toast(msg, ms = 2600) {
 function renderMap() {
   const pois = withDistance(mapPois(), state.user && state.user.coords);
   map.renderMarkers(pois, { onSelect: selectPoi, selectedId: state.selectedId });
+}
+
+// Korean label layer: sources (per park) + options (per selection/fav/setting).
+function syncLabelSources() {
+  const meta = parkMeta();
+  map.setLabelSources({
+    parkMeta: meta,
+    areas: meta.areas,
+    attractions: getAllAttractions(state.park),
+    facilities: getFacilities(state.park),
+    landmark: LANDMARK_ATTRACTIONS,
+  });
+}
+function syncLabelOptions() {
+  map.setLabelOptions({
+    selectedId: state.selectedId,
+    favIds: new Set(store.getFavorites()),
+    mapLang: store.getSettings().mapLang,
+  });
 }
 
 function chip(id, label, active) {
@@ -249,6 +268,13 @@ function renderSettings() {
     </label>
     <p class="muted small">끄면 신뢰도가 낮은 추정 좌표(화장실·시설)는 지도와 목록에서 숨겨집니다. 어트랙션은 항상 대략적 위치로 표시됩니다.</p>
 
+    <h3 class="sheet-h3">지도 라벨 표기</h3>
+    <div class="chips" role="group" aria-label="지도 라벨 표기">
+      <button class="chip ${(s.mapLang || 'ko') === 'ko' ? 'chip-on' : ''}" data-maplang="ko" type="button" aria-pressed="${(s.mapLang || 'ko') === 'ko'}">한국어 중심</button>
+      <button class="chip ${s.mapLang === 'ko-ja' ? 'chip-on' : ''}" data-maplang="ko-ja" type="button" aria-pressed="${s.mapLang === 'ko-ja'}">한국어 + 일본어 보조</button>
+    </div>
+    <p class="muted small">지도에 표시되는 구역·어트랙션 이름은 한국어입니다. "한국어 + 일본어 보조"를 켜면 지도 라벨 아래에 작은 일본어 이름이 함께 표시됩니다. 일본어·영어 이름은 상세 카드에서도 확인할 수 있어요.</p>
+
     <h3 class="sheet-h3">테마</h3>
     <div class="chips">
       ${['auto', 'light', 'dark'].map((t) => `<button class="chip ${s.theme === t ? 'chip-on' : ''}" data-theme="${t}" type="button">${t === 'auto' ? '자동' : t === 'light' ? '밝게' : '어둡게'}</button>`).join('')}
@@ -357,6 +383,7 @@ function selectPoi(id) {
   const poi = getPoiById(state.park, id);
   if (poi && poi.coordinates) map.focusPoi(poi.coordinates, 17);
   map.highlight(id);
+  syncLabelOptions();
   state.tab = 'detail';
   els.sheet.classList.add('open');
   els.sheet.setAttribute('aria-hidden', 'false');
@@ -379,6 +406,8 @@ function setPark(p) {
   });
   map.setPark(parkMeta());
   renderMap();
+  syncLabelSources();
+  syncLabelOptions();
   if (state.tab !== 'map') renderSheet();
   toast(`${PARKS[p].nameKo}로 전환했습니다`);
 }
@@ -512,7 +541,7 @@ function bindEvents() {
     const act = t.closest('button[data-act]');
     if (act) {
       const id = act.dataset.poi;
-      if (act.dataset.act === 'fav') { const on = store.toggleFavorite(id); toast(on ? '즐겨찾기에 추가' : '즐겨찾기 해제'); renderDetail(id); }
+      if (act.dataset.act === 'fav') { const on = store.toggleFavorite(id); toast(on ? '즐겨찾기에 추가' : '즐겨찾기 해제'); renderDetail(id); syncLabelOptions(); }
       if (act.dataset.act === 'direction') showDirection(id);
       if (act.dataset.act === 'visit') { const on = store.toggleVisit(id); toast(on ? '방문 목록에 추가' : '방문 목록에서 제거'); renderDetail(id); }
       return;
@@ -542,7 +571,11 @@ function bindEvents() {
 
     // settings: theme
     const themeBtn = t.closest('button[data-theme]');
-    if (themeBtn) { applyTheme(themeBtn.dataset.theme); store.setSettings({ theme: themeBtn.dataset.theme }); renderSettings(); return; }
+    if (themeBtn) { applyTheme(themeBtn.dataset.theme); store.setSettings({ theme: themeBtn.dataset.theme }); renderSettings(); syncLabelOptions(); return; }
+
+    // settings: map label language
+    const mlBtn = t.closest('button[data-maplang]');
+    if (mlBtn) { store.setSettings({ mapLang: mlBtn.dataset.maplang }); renderSettings(); syncLabelOptions(); toast(mlBtn.dataset.maplang === 'ko-ja' ? '지도 라벨: 한국어 + 일본어' : '지도 라벨: 한국어'); return; }
   });
 
   // settings inputs
@@ -602,6 +635,8 @@ function init() {
     onTileError: () => toast('지도 타일을 불러오지 못했습니다. 오프라인이면 목록·검색·즐겨찾기를 이용하세요.', 4000),
   });
   renderMap();
+  syncLabelSources();
+  syncLabelOptions();
   bindEvents();
   syncNav();
   updateOnline();
