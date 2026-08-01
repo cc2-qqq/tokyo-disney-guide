@@ -72,8 +72,45 @@ export const store = {
   },
   setChildren(children) { write(KEY.children, children); },
 
-  getFilters() { return read(KEY.filters, {}); },
-  setFilters(f) { write(KEY.filters, f); },
+  getFilters() { return this.normalizeFilters(read(KEY.filters, {})); },
+  setFilters(f) { write(KEY.filters, this.normalizeFilters(f)); },
+
+  /**
+   * Normalize filter storage.
+   * Attraction filters stay shared; facility filters are per-park
+   * ({ facilityByPark: { TDL, TDS } }).
+   * Legacy shared `facility` migrates to TDL only so High-only does not carry into TDS.
+   */
+  normalizeFilters(raw) {
+    const src = raw && typeof raw === 'object' ? raw : {};
+    const attraction = src.attraction || {};
+    let facilityByPark = src.facilityByPark;
+    if (!facilityByPark || typeof facilityByPark !== 'object') {
+      facilityByPark = { TDL: {}, TDS: {} };
+      if (src.facility && typeof src.facility === 'object') {
+        facilityByPark.TDL = { ...src.facility };
+      }
+    } else {
+      facilityByPark = {
+        TDL: { ...(facilityByPark.TDL || {}) },
+        TDS: { ...(facilityByPark.TDS || {}) },
+      };
+    }
+    return { attraction, facilityByPark };
+  },
+
+  getFacilityFilters(park) {
+    const p = park === 'TDS' ? 'TDS' : 'TDL';
+    const all = this.getFilters();
+    return { ...(all.facilityByPark[p] || {}) };
+  },
+
+  setFacilityFilters(park, ff) {
+    const p = park === 'TDS' ? 'TDS' : 'TDL';
+    const all = this.getFilters();
+    all.facilityByPark[p] = ff && typeof ff === 'object' ? { ...ff } : {};
+    this.setFilters(all);
+  },
 
   getVisitList() { return read(KEY.visitList, []); },
   setVisitList(list) { write(KEY.visitList, list); },
