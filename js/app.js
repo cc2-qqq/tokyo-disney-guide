@@ -2,7 +2,9 @@ import { PARKS, getPois, getAttractions, getAllAttractions, getFacilities, getPo
 import { closureOnDate } from './labels.js';
 import { store } from './store.js';
 import { createMapController } from './map.js';
-import { createLocator, haversineMeters, bearingDegrees, formatDistance } from './geo.js';
+import {
+  createLocator, requestPositionOnce, haversineMeters, bearingDegrees, formatDistance, compass8,
+} from './geo.js';
 import {
   matchText, attractionMatchesFilters, facilityMatchesFilters,
   facilityVisible, facilityBandCounts, withDistance, sortByDistance,
@@ -33,6 +35,11 @@ const state = {
   user: null,           // { coords:[lat,lng], accuracy }
   locating: false,
   outsideParkChoice: null, // 'entrance' | 'keep' | null
+  // Direction start: 'user' | 'entrance' | 'map' | null (auto)
+  startOrigin: null,
+  manualStart: null,      // [lat,lng] when startOrigin === 'map'
+  pendingDirectionId: null, // resume direction after GPS grant
+  pickingStart: false,
 };
 
 const map = createMapController('map');
@@ -71,15 +78,38 @@ function mapPois() {
 }
 
 function distanceTo(poi) {
-  if (!state.user || !poi || !poi.coordinates) return null;
-  return haversineMeters(state.user.coords, poi.coordinates);
+  const from = directionStartCoords();
+  if (!from || !poi || !poi.coordinates) return null;
+  return haversineMeters(from, poi.coordinates);
+}
+
+function directionStartCoords() {
+  if (state.startOrigin === 'entrance' && parkMeta().entranceCoordinates) {
+    return parkMeta().entranceCoordinates;
+  }
+  if (state.startOrigin === 'map' && state.manualStart) return state.manualStart;
+  if (state.user && state.user.coords && isInsidePark(state.user.coords)) {
+    return state.user.coords;
+  }
+  return null;
+}
+
+function directionOriginLabel() {
+  if (state.startOrigin === 'entrance') return '파크 정문';
+  if (state.startOrigin === 'map') return '지도에서 선택한 출발점';
+  if (state.user && state.user.coords && isInsidePark(state.user.coords)) return '현재 위치';
+  return '';
 }
 
 function directionFor(poi) {
-  if (state.directionId !== poi.id || !state.user || !poi.coordinates) return null;
+  if (state.directionId !== poi.id || !poi.coordinates) return null;
+  const from = directionStartCoords();
+  if (!from) return null;
+  const bearing = bearingDegrees(from, poi.coordinates);
   return {
-    distance: haversineMeters(state.user.coords, poi.coordinates),
-    bearing: bearingDegrees(state.user.coords, poi.coordinates),
+    distance: haversineMeters(from, poi.coordinates),
+    bearing,
+    bearingLabel: `${compass8(bearing)}쪽 방향 (${Math.round(bearing)}\u00B0)`,
   };
 }
 
@@ -343,7 +373,7 @@ function renderSettings() {
       <p><strong>TDL</strong> 화장실 9곳 지도 기반 추정(대략 5~10m), 추가 검증 4곳, 미확인 1곳(비표시). 중앙구호실 1곳.</p>
       <p><strong>TDS</strong> 화장실 10곳·베이비케어 2곳·중앙구호실 1곳 — 공식 PDF 기반 추정(Google POI 미확인). 기본은 Medium 이상 표시, Low는 「낮은 신뢰도 위치까지 표시」로 켭니다.</p>
       <p><strong>키 기준</strong> 공식 FAQ(2026-08-01) 기준으로 운영 어트랙션 전수 반영. 레이징 스피리츠는 117~195cm.</p>
-      <p><strong>보행 경로</strong> 미검증 그래프는 사용하지 않습니다. TDL 월드바자·어드벤처랜드 시범 구간만 검증된 예상 경로를 제공하며, 그 외는 방향·직선거리만 안내합니다.</p>
+      <p><strong>보행 경로</strong> 상세 보행 경로는 검증 중입니다. 현재는 목적지 방향과 직선거리만 안내합니다. 현재 위치가 없거나 파크 밖이면 정문·지도에서 출발점을 고를 수 있습니다.</p>
       <p><strong>운영 종료·장기 휴장</strong> 스페이스 마운틴·버즈 라이트이어(TDL), 머메이드 라군 시어터(TDS)는 기본 목록·지도에서 제외했습니다.</p>
       <p class="small">모든 좌표는 실측 GPS가 아니며 참고용입니다. 실시간 대기시간·운영 여부는 공식 앱에서 확인하세요.</p>
     </div>`;
@@ -366,7 +396,10 @@ function renderDetail(id) {
     inVisit: store.inVisitList(id),
     distance: distanceTo(withArea),
     userCoords: state.user && state.user.coords,
-    direction: directionFor(withArea),
+    // Avoid duplicating the direction card when routeInfo already shows direction.
+    direction: (routeInfo && (routeInfo.mode === 'direction' || routeInfo.mode === 'need-origin' || routeInfo.mode === 'outside-park'))
+      ? null
+      : directionFor(withArea),
     routeInfo,
     canWalkRoute,
   };
@@ -464,8 +497,14 @@ function clearNavLines() {
   state.directionId = null;
   state.routeId = null;
   state.routeInfo = null;
+  state.pendingDirectionId = null;
+  state.pickingStart = false;
+  state.startOrigin = null;
+  state.manualStart = null;
   map.clearDirection();
   map.clearRoute();
+  map.clearStartMarker();
+  map.cancelPickStart();
   if (typeof map.clearRouteDebug === 'function') map.clearRouteDebug();
 }
 
@@ -518,24 +557,214 @@ function routeStartCoords() {
 }
 
 // ---- direction / walk route ----
-function showDirection(id) {
+function applyDirection(id, from, originLabel) {
   const poi = getPoiById(state.park, id);
-  if (!poi || !poi.coordinates) return;
-  if (!state.user) { toast('먼저 현재 위치를 켜 주세요'); return; }
+  if (!poi || !poi.coordinates || !from) return;
+  const bearing = bearingDegrees(from, poi.coordinates);
   state.directionId = id;
   state.routeId = id;
+  state.pendingDirectionId = null;
   state.routeInfo = {
     mode: 'direction',
     support: 'direction',
-    distance: haversineMeters(state.user.coords, poi.coordinates),
+    poiId: id,
+    distance: haversineMeters(from, poi.coordinates),
+    bearingLabel: `${compass8(bearing)}쪽 방향 (${Math.round(bearing)}\u00B0)`,
+    originLabel: originLabel || directionOriginLabel(),
     reason: VERIFYING_MSG,
   };
   map.clearRoute();
   map.clearRouteDebug();
-  map.showDirection(state.user.coords, poi.coordinates);
-  if (ROUTE_DEBUG) maybeShowLegacyDebug(poi, state.user.coords);
+  map.cancelPickStart();
+  state.pickingStart = false;
+  if (state.startOrigin === 'map' || state.startOrigin === 'entrance') {
+    map.setStartMarker(from, originLabel || '출발점');
+  } else {
+    map.clearStartMarker();
+  }
+  map.showDirection(from, poi.coordinates);
+  if (ROUTE_DEBUG) maybeShowLegacyDebug(poi, from);
   renderDetail(id);
   toast('방향·직선거리만 안내합니다');
+}
+
+function showNeedOrigin(id, reason, mode = 'need-origin') {
+  const poi = getPoiById(state.park, id);
+  if (!poi) return;
+  state.directionId = null;
+  state.routeId = id;
+  state.routeInfo = {
+    mode,
+    support: 'need-origin',
+    poiId: id,
+    reason,
+  };
+  map.clearRoute();
+  map.clearDirection();
+  map.clearRouteDebug();
+  renderDetail(id);
+}
+
+function showDirection(id) {
+  const poi = getPoiById(state.park, id);
+  if (!poi || !poi.coordinates) return;
+
+  // Explicit origin already chosen
+  if (state.startOrigin === 'entrance' && parkMeta().entranceCoordinates) {
+    applyDirection(id, parkMeta().entranceCoordinates, '파크 정문');
+    return;
+  }
+  if (state.startOrigin === 'map' && state.manualStart) {
+    applyDirection(id, state.manualStart, '지도에서 선택한 출발점');
+    return;
+  }
+
+  // GPS available and inside park
+  if (state.user && state.user.coords && isInsidePark(state.user.coords)) {
+    state.startOrigin = 'user';
+    applyDirection(id, state.user.coords, '현재 위치');
+    return;
+  }
+
+  // GPS available but outside park — never draw a long cross-city line
+  if (state.user && state.user.coords && !isInsidePark(state.user.coords)) {
+    map.clearDirection();
+    showNeedOrigin(id, '현재 위치가 파크 밖에 있습니다.', 'outside-park');
+    toast('현재 위치가 파크 밖에 있습니다.', 3500);
+    return;
+  }
+
+  // No GPS yet — request permission, keep button usable, offer origin choices
+  state.pendingDirectionId = id;
+  showNeedOrigin(id, '방향 안내를 위해 현재 위치가 필요합니다.');
+  toast('방향 안내를 위해 현재 위치가 필요합니다.', 3200);
+  requestLocationForDirection(id);
+}
+
+function requestLocationForDirection(id) {
+  const requestForId = id;
+  setLocStatus('현재 위치를 확인하는 중…');
+  requestPositionOnce()
+    .then(({ coords, accuracy }) => {
+      const first = !state.user;
+      state.user = { coords, accuracy };
+      map.setUserLocation(coords, accuracy);
+      if (!state.locating) {
+        // Keep a watch going so the blue dot stays fresh (same as loc button).
+        ensureLocatorWatching();
+      }
+
+      // User already picked entrance/map — update GPS only, do not clobber that origin.
+      if (state.startOrigin === 'entrance' || state.startOrigin === 'map') {
+        const inside = isInsidePark(coords);
+        setLocStatus(inside
+          ? `현재 위치 확인됨 (정확도 약 ${Math.round(accuracy)}m)`
+          : '현재 위치가 파크 밖에 있습니다.');
+        renderMap();
+        return;
+      }
+
+      const inside = isInsidePark(coords);
+      if (!inside) {
+        setLocStatus('현재 위치가 파크 밖에 있습니다.');
+        const target = state.pendingDirectionId || requestForId;
+        if (target && state.selectedId === target) {
+          showNeedOrigin(target, '현재 위치가 파크 밖에 있습니다.', 'outside-park');
+          toast('현재 위치가 파크 밖에 있습니다.', 3500);
+        }
+        return;
+      }
+      setLocStatus(`현재 위치 확인됨 (정확도 약 ${Math.round(accuracy)}m)`);
+      if (first) map.centerOnUser(coords);
+      const target = state.pendingDirectionId || requestForId;
+      if (target && (state.pendingDirectionId === target || state.startOrigin == null || state.startOrigin === 'user')) {
+        state.startOrigin = 'user';
+        applyDirection(target, coords, '현재 위치');
+      } else if (state.tab === 'detail' && state.selectedId) {
+        renderDetail(state.selectedId);
+      }
+      renderMap();
+    })
+    .catch((err) => {
+      const msg = (err && err.message) || '위치를 가져오지 못했습니다.';
+      setLocStatus(msg);
+      // Do not overwrite an origin the user already chose.
+      if (state.startOrigin === 'entrance' || state.startOrigin === 'map') return;
+      const target = state.pendingDirectionId || requestForId;
+      if (target && state.selectedId === target) {
+        showNeedOrigin(
+          target,
+          '위치 권한을 허용하거나 출발점을 선택해 주세요.',
+          'need-origin',
+        );
+        toast('위치 권한을 허용하거나 출발점을 선택해 주세요.', 4000);
+      }
+    });
+}
+
+function ensureLocatorWatching() {
+  if (state.locating && locator) return;
+  state.locating = true;
+  els.locBtn.classList.add('on');
+  locator = createLocator({
+    onStatus: (s) => setLocStatus(s),
+    onError: (e) => {
+      setLocStatus(e.message);
+      state.locating = false;
+      els.locBtn.classList.remove('on');
+    },
+    onPosition: ({ coords, accuracy }) => {
+      state.user = { coords, accuracy };
+      map.setUserLocation(coords, accuracy);
+      let msg = `현재 위치 확인됨 (정확도 약 ${Math.round(accuracy)}m)`;
+      if (accuracy > 60) msg += ' · 정확도가 낮습니다';
+      if (!isInsidePark(coords)) {
+        msg = '현재 위치가 파크 밖에 있습니다.';
+        if (state.pendingDirectionId) {
+          showNeedOrigin(state.pendingDirectionId, '현재 위치가 파크 밖에 있습니다.', 'outside-park');
+        }
+      }
+      setLocStatus(msg);
+      if (state.pendingDirectionId && isInsidePark(coords)) {
+        state.startOrigin = 'user';
+        applyDirection(state.pendingDirectionId, coords, '현재 위치');
+      } else if (state.tab === 'detail' && state.selectedId) {
+        renderDetail(state.selectedId);
+      }
+      renderMap();
+    },
+  });
+  locator.start();
+}
+
+function useEntranceOrigin(id) {
+  state.startOrigin = 'entrance';
+  state.manualStart = null;
+  state.outsideParkChoice = 'entrance';
+  map.clearStartMarker();
+  applyDirection(id, parkMeta().entranceCoordinates, '파크 정문');
+}
+
+function beginMapOriginPick(id) {
+  state.pendingDirectionId = id;
+  state.pickingStart = true;
+  state.startOrigin = null;
+  toast('지도에서 출발점을 탭하세요', 3500);
+  setLocStatus('지도에서 출발점을 탭하세요');
+  // Collapse sheet a bit so the map is usable on mobile
+  map.beginPickStart((coords) => {
+    if (!isInsidePark(coords)) {
+      toast('파크 안에서 출발점을 선택해 주세요', 3500);
+      state.pickingStart = false;
+      if (state.selectedId) renderDetail(state.selectedId);
+      return;
+    }
+    state.startOrigin = 'map';
+    state.manualStart = coords;
+    state.pickingStart = false;
+    setLocStatus('지도에서 선택한 출발점 사용');
+    applyDirection(id, coords, '지도에서 선택한 출발점');
+  });
 }
 
 function showRoute(id) {
@@ -615,24 +844,8 @@ function maybeShowLegacyDebug(poi, from) {
 }
 
 function injectOutsideParkChoices(id) {
-  const host = els.sheetBody.querySelector('.route-card') || els.sheetBody;
-  if (!host) return;
-  const box = document.createElement('div');
-  box.className = 'outside-choices';
-  const graph = WALK_GRAPHS[state.park];
-  const poi = getPoiById(state.park, id);
-  const canWalk = canOfferWalkRoute(graph, poi, parkMeta().entranceCoordinates, {
-    maxBounds: parkMeta().maxBounds,
-    entranceCoords: parkMeta().entranceCoordinates,
-  });
-  box.innerHTML = `
-    <p class="detail-note"><strong>현재 위치가 선택한 파크 밖에 있습니다.</strong></p>
-    ${canWalk
-    ? `<button class="btn btn-primary" data-act="route-from-entrance" data-poi="${ui.esc(id)}" type="button">파크 입구부터 예상 경로 보기</button>`
-    : ''}
-    <button class="btn" data-act="keep-map" type="button">현재 위치는 유지하고 파크 지도 보기</button>
-    <button class="btn" data-act="switch-other-park" type="button">다른 파크로 전환</button>`;
-  host.appendChild(box);
+  // Direction-first outside-park UX is rendered via routeInfo (outside-park card).
+  showNeedOrigin(id, '현재 위치가 파크 밖에 있습니다.', 'outside-park');
 }
 
 // ---- location ----
@@ -664,14 +877,22 @@ function toggleLocation() {
       if (accuracy > 60) msg += ' · 정확도가 낮습니다';
       const inside = isInsidePark(coords);
       if (!inside) {
-        msg = '현재 위치가 선택한 파크 밖에 있습니다.';
+        msg = '현재 위치가 파크 밖에 있습니다.';
         // Do not auto-pan the map to chase out-of-park GPS.
+        if (state.pendingDirectionId) {
+          showNeedOrigin(state.pendingDirectionId, '현재 위치가 파크 밖에 있습니다.', 'outside-park');
+        }
       } else if (first) {
         map.centerOnUser(coords);
       }
       setLocStatus(msg);
-      renderMap();
-      if (state.tab === 'detail') renderDetail(state.selectedId);
+      if (inside && state.pendingDirectionId) {
+        state.startOrigin = 'user';
+        applyDirection(state.pendingDirectionId, coords, '현재 위치');
+      } else {
+        renderMap();
+        if (state.tab === 'detail' && state.selectedId) renderDetail(state.selectedId);
+      }
     },
   });
   locator.start();
@@ -759,10 +980,31 @@ function bindEvents() {
       const id = act.dataset.poi;
       if (act.dataset.act === 'fav') { const on = store.toggleFavorite(id); toast(on ? '즐겨찾기에 추가' : '즐겨찾기 해제'); renderDetail(id); syncLabelOptions(); }
       if (act.dataset.act === 'route') showRoute(id);
-      if (act.dataset.act === 'direction') showDirection(id);
+      if (act.dataset.act === 'direction') {
+        state.startOrigin = null;
+        showDirection(id);
+      }
       if (act.dataset.act === 'visit') { const on = store.toggleVisit(id); toast(on ? '방문 목록에 추가' : '방문 목록에서 제거'); renderDetail(id); }
-      if (act.dataset.act === 'clear-route') { clearNavLines(); if (state.selectedId) renderDetail(state.selectedId); toast('경로를 지웠습니다'); }
-      if (act.dataset.act === 'route-from-entrance') { state.outsideParkChoice = 'entrance'; showRoute(id); }
+      if (act.dataset.act === 'clear-route') {
+        state.startOrigin = null;
+        state.manualStart = null;
+        clearNavLines();
+        if (state.selectedId) renderDetail(state.selectedId);
+        toast('방향 안내를 지웠습니다');
+      }
+      if (act.dataset.act === 'origin-user') {
+        state.startOrigin = 'user';
+        state.manualStart = null;
+        if (state.user && state.user.coords && isInsidePark(state.user.coords)) {
+          applyDirection(id, state.user.coords, '현재 위치');
+        } else {
+          showNeedOrigin(id, '방향 안내를 위해 현재 위치가 필요합니다.');
+          requestLocationForDirection(id);
+        }
+      }
+      if (act.dataset.act === 'origin-entrance') useEntranceOrigin(id);
+      if (act.dataset.act === 'origin-map') beginMapOriginPick(id);
+      if (act.dataset.act === 'route-from-entrance') useEntranceOrigin(id);
       if (act.dataset.act === 'keep-map') { state.outsideParkChoice = 'keep'; clearNavLines(); toast('파크 지도를 유지합니다'); map.resetView(parkMeta()); }
       if (act.dataset.act === 'switch-other-park') { setPark(state.park === 'TDL' ? 'TDS' : 'TDL'); }
       return;

@@ -33,6 +33,8 @@ export function createMapController(elId) {
   let directionLine = null;
   let routeLine = null;
   let debugGroup = null;
+  let startMarker = null;
+  let pickHandler = null;
   let basemapFailed = false;
   let onBasemapError = null;
   let currentTheme = 'auto';
@@ -302,6 +304,58 @@ export function createMapController(elId) {
     if (directionLine) { map.removeLayer(directionLine); directionLine = null; }
   }
 
+  function setStartMarker(coords, title = '출발점') {
+    if (!map || !coords) return;
+    if (!startMarker) {
+      startMarker = L.marker(coords, {
+        icon: L.divIcon({
+          html: '<div class="start-dot" aria-hidden="true">출발</div>',
+          className: 'start-wrap',
+          iconSize: [36, 22],
+          iconAnchor: [18, 11],
+        }),
+        zIndexOffset: 900,
+        title,
+      }).addTo(map);
+    } else {
+      startMarker.setLatLng(coords);
+      startMarker.setTooltipContent?.(title);
+    }
+  }
+
+  function clearStartMarker() {
+    if (startMarker) { map.removeLayer(startMarker); startMarker = null; }
+  }
+
+  /** One-shot map tap to choose a direction start point. */
+  function beginPickStart(onPick, { prompt } = {}) {
+    cancelPickStart();
+    if (!map) return;
+    const el = map.getContainer();
+    el.classList.add('is-picking-start');
+    el.style.cursor = 'crosshair';
+    if (prompt) {
+      /* caller shows toast */
+    }
+    pickHandler = (e) => {
+      const coords = [e.latlng.lat, e.latlng.lng];
+      cancelPickStart();
+      onPick && onPick(coords);
+    };
+    map.once('click', pickHandler);
+  }
+
+  function cancelPickStart() {
+    if (!map) return;
+    if (pickHandler) {
+      map.off('click', pickHandler);
+      pickHandler = null;
+    }
+    const el = map.getContainer();
+    el.classList.remove('is-picking-start');
+    el.style.cursor = '';
+  }
+
   // Solid "예상 보행 경로" along the park graph (visually distinct from dir-line).
   function showRoute(latlngs) {
     clearRoute();
@@ -542,6 +596,7 @@ export function createMapController(elId) {
   return {
     init, setPark, setBasemapTheme, setBasemapLabelMode, resetView, renderMarkers, highlight, focusPoi,
     setUserLocation, centerOnUser, showDirection, clearDirection,
+    setStartMarker, clearStartMarker, beginPickStart, cancelPickStart,
     showRoute, clearRoute, showRouteDebug, clearRouteDebug, invalidate,
     setLabelSources, setLabelOptions, renderLabels,
     getMap: () => map,
