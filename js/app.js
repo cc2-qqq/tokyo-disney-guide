@@ -286,7 +286,7 @@ function showEntrancesOverview() {
           <span class="li-mark li-entrance" aria-hidden="true">入</span>
           <span class="li-body">
             <span class="li-name">${ui.esc(e.nameKo)}</span>
-            <span class="li-meta">${e.entranceKind === 'main_entrance' ? '주 출입구' : e.entranceKind === 'pre_gate' ? '프리게이트' : '스테이션 쪽'}</span>
+            <span class="li-meta">${e.entranceKind === 'main_entrance' ? '메인 입구' : e.entranceKind === 'pre_gate' ? '입구 앞 프리게이트' : '스테이션 진입 방향'}</span>
           </span>
         </button>
       </li>`).join('')}</ul>
@@ -643,7 +643,7 @@ function renderSettings() {
     ${meetupSettingsHtml()}
 
     <h3 class="sheet-h3">입구·경계 표시</h3>
-    <p class="muted small">파크 경계는 안내용 시각 표시입니다. 실제 운영 구역과 세부 동선은 현장 안내를 따라 주세요.</p>
+    <p class="muted small">파크 윤곽은 놀이동산 실제 형태에 가까운 안내용 표시입니다. 주차장·외부도로를 포함하지 않으며, 실제 운영 구역은 현장 안내를 따라 주세요.</p>
     <label class="switch-row">
       <input type="checkbox" id="set-entrance-markers" ${s.showEntranceMarkers !== false ? 'checked' : ''} />
       <span>입구 표시</span>
