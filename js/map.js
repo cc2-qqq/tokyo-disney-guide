@@ -25,6 +25,7 @@ export function createMapController(elId) {
   let userMarker = null;
   let accuracyCircle = null;
   let directionLine = null;
+  let routeLine = null;
   let tileErrorShown = false;
   let onTileError = null;
 
@@ -46,12 +47,17 @@ export function createMapController(elId) {
     onTileError = cb;
     map = L.map(elId, {
       center: parkMeta.center,
-      zoom: parkMeta.zoom,
+      zoom: parkMeta.defaultZoom || parkMeta.zoom,
       minZoom: parkMeta.minZoom,
       maxZoom: parkMeta.maxZoom,
       zoomControl: true,
       attributionControl: true,
+      // Keep the user inside the park: hard drag limit (not a snap-back).
+      maxBounds: parkMeta.maxBounds ? L.latLngBounds(parkMeta.maxBounds) : undefined,
+      maxBoundsViscosity: 1.0,
+      bounceAtZoomLimits: false,
     });
+    labelState.parkMeta = parkMeta;
     // OpenStreetMap raster kept (clear ODbL terms + offline-cache friendly).
     // Rendered pale via CSS (#map .leaflet-tile-pane) so Korean overlay labels dominate.
     tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -75,13 +81,33 @@ export function createMapController(elId) {
     labelGroup = L.layerGroup().addTo(map);
 
     map.on('zoomend moveend', renderLabels);
+    if (parkMeta.defaultBounds) {
+      map.fitBounds(L.latLngBounds(parkMeta.defaultBounds), { animate: false });
+    }
     return map;
   }
 
   function setPark(parkMeta) {
     tileErrorShown = false;
     labelState.parkMeta = parkMeta;
-    map.setView(parkMeta.center, parkMeta.zoom);
+    clearRoute();
+    clearDirection();
+    // Apply this park's drag limits, then frame the whole park.
+    map.setMinZoom(parkMeta.minZoom);
+    map.setMaxZoom(parkMeta.maxZoom);
+    map.setMaxBounds(parkMeta.maxBounds ? L.latLngBounds(parkMeta.maxBounds) : null);
+    resetView(parkMeta);
+  }
+
+  // Frame the park nicely (used on switch + "지도 초기화").
+  function resetView(parkMeta) {
+    const meta = parkMeta || labelState.parkMeta;
+    if (!meta) return;
+    if (meta.defaultBounds) {
+      map.fitBounds(L.latLngBounds(meta.defaultBounds), { animate: true });
+    } else {
+      map.setView(meta.center, meta.defaultZoom || meta.zoom);
+    }
   }
 
   function makeIcon(poi, selected) {
@@ -157,12 +183,17 @@ export function createMapController(elId) {
   }
 
   function centerOnUser(coords) {
-    if (coords) map.flyTo(coords, Math.max(map.getZoom(), 17), { duration: 0.6 });
+    // Never pan the map outside park maxBounds to chase an out-of-park GPS fix.
+    if (!coords || !map) return;
+    const mb = map.getMaxBounds();
+    if (mb && !mb.contains(L.latLng(coords[0], coords[1]))) return;
+    map.flyTo(coords, Math.max(map.getZoom(), 17), { duration: 0.6 });
   }
 
   // Dashed, thin, secondary "as-the-crow-flies" line. NOT a walking route.
   function showDirection(from, to) {
     clearDirection();
+    clearRoute();
     if (!from || !to) return;
     directionLine = L.polyline([from, to], {
       color: '#7a3ea8',
@@ -170,12 +201,33 @@ export function createMapController(elId) {
       opacity: 0.6,
       dashArray: '8, 10',
       lineCap: 'round',
+      className: 'dir-line',
     }).addTo(map);
     map.fitBounds(directionLine.getBounds(), { padding: [60, 60], maxZoom: 18 });
   }
 
   function clearDirection() {
     if (directionLine) { map.removeLayer(directionLine); directionLine = null; }
+  }
+
+  // Solid walk-path polyline along the park graph (distinct from dashed direction).
+  function showRoute(latlngs) {
+    clearRoute();
+    clearDirection();
+    if (!latlngs || latlngs.length < 2) return;
+    routeLine = L.polyline(latlngs, {
+      color: '#0b6bcb',
+      weight: 5,
+      opacity: 0.85,
+      lineCap: 'round',
+      lineJoin: 'round',
+      className: 'route-line',
+    }).addTo(map);
+    map.fitBounds(routeLine.getBounds(), { padding: [50, 50], maxZoom: 18 });
+  }
+
+  function clearRoute() {
+    if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
   }
 
   // ---- Korean label layer ----
@@ -300,8 +352,9 @@ export function createMapController(elId) {
   function invalidate() { if (map) setTimeout(() => { map.invalidateSize(); renderLabels(); }, 50); }
 
   return {
-    init, setPark, renderMarkers, highlight, focusPoi,
-    setUserLocation, centerOnUser, showDirection, clearDirection, invalidate,
+    init, setPark, resetView, renderMarkers, highlight, focusPoi,
+    setUserLocation, centerOnUser, showDirection, clearDirection,
+    showRoute, clearRoute, invalidate,
     setLabelSources, setLabelOptions, renderLabels,
     getMap: () => map,
   };

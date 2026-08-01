@@ -7,7 +7,12 @@ import {
   matchText, attractionMatchesFilters, facilityMatchesFilters,
   facilityVisible, withDistance, sortByDistance,
 } from './search.js';
+import { routeToPoi } from './routing.js';
+import { TDL_WALK_GRAPH } from './data/routes/tdlWalkGraph.js';
+import { TDS_WALK_GRAPH } from './data/routes/tdsWalkGraph.js';
 import * as ui from './ui.js';
+
+const WALK_GRAPHS = { TDL: TDL_WALK_GRAPH, TDS: TDS_WALK_GRAPH };
 
 const state = {
   park: store.getPark(),
@@ -16,8 +21,11 @@ const state = {
   query: '',
   selectedId: null,
   directionId: null,    // POI id currently showing direction line
+  routeId: null,        // POI id currently showing walk route
+  routeInfo: null,      // { mode, distance, confidence, reason, ... }
   user: null,           // { coords:[lat,lng], accuracy }
   locating: false,
+  outsideParkChoice: null, // 'entrance' | 'keep' | null
 };
 
 const map = createMapController('map');
@@ -113,11 +121,17 @@ function chip(id, label, active) {
 }
 
 function attractionFilterBar(f) {
+  const children = store.getChildren();
+  const childChips = children.map((c, i) => chip(`h-child:${i}`, `${ui.esc(c.name)} 탑승 가능`, f.height === `child:${i}`)).join('');
   return `<div class="chips" role="group" aria-label="어트랙션 필터">
     ${chip('h-none', '키 제한 없음', f.height === 'none')}
+    ${chip('h-81', '81cm 이하 이용 가능', f.height === '81')}
     ${chip('h-90', '90cm 이상', f.height === '90')}
     ${chip('h-102', '102cm 이상', f.height === '102')}
     ${chip('h-117', '117cm 이상', f.height === '117')}
+    ${childChips}
+    ${chip('h-all-children', '두 아이 모두 탑승 가능', f.height === 'all-children')}
+    ${chip('h-unverified', '공식 기준 미확인', f.height === 'unverified')}
     ${chip('kid', '어린이 추천', f.kid)}
     ${chip('thrill', '스릴 있음', f.thrill)}
     ${chip('indoor', '실내', f.indoor)}
@@ -167,9 +181,13 @@ function closedVisitBadge(closure) {
   return closure ? '<span class="badge badge-closed">방문일 휴장</span>' : '';
 }
 
+function filterCtx() {
+  return { isFavorite: (id) => store.isFavorite(id), children: store.getChildren() };
+}
+
 function renderAttractions() {
   const f = getFilters().attraction;
-  let items = getAttractions(state.park).filter((p) => matchText(p, state.query) && attractionMatchesFilters(p, f, { isFavorite: (id) => store.isFavorite(id) }));
+  let items = getAttractions(state.park).filter((p) => matchText(p, state.query) && attractionMatchesFilters(p, f, filterCtx()));
   items = withDistance(items, state.user && state.user.coords);
   if (f.nearest) items = sortByDistance(items);
   items = annotateClosure(items);
@@ -188,8 +206,8 @@ function renderRestrooms() {
   if (f.nearest) items = sortByDistance(items);
   els.sheetTitle.textContent = `화장실·시설 (${items.length})`;
   let body = facilityFilterBar(f);
-  if (state.park === 'TDS' && getFacilities('TDS').length === 0) {
-    body += `<div class="notice">도쿄디즈니씨(TDS)의 화장실·응급시설 좌표는 검증된 데이터가 준비되는 대로 추가됩니다. 임의의 미검증 좌표는 표시하지 않습니다. (조사 예정)</div>`;
+  if (state.park === 'TDS') {
+    body += `<div class="notice">TDS 화장실·수유·베이비케어·중앙구호실은 공식 PDF 기반 <strong>추정 좌표</strong>입니다(Google POI 미확인). 기본 지도에는 High만 표시되므로, 지금 목록을 보려면 필터에서 <strong>추정 위치 포함</strong>을 켜 주세요.</div>`;
   }
   body += ui.listHtml(items, {
     isFav: (id) => store.isFavorite(id),
@@ -264,9 +282,11 @@ function renderSettings() {
     <h3 class="sheet-h3">지도 표시</h3>
     <label class="switch-row">
       <input type="checkbox" id="set-estimated" ${s.includeEstimated ? 'checked' : ''} />
-      <span>추정 위치(대략적 위치) 포함해서 보기</span>
+      <span>지도 자료 기반 추정 위치 포함</span>
     </label>
-    <p class="muted small">끄면 신뢰도가 낮은 추정 좌표(화장실·시설)는 지도와 목록에서 숨겨집니다. 어트랙션은 항상 대략적 위치로 표시됩니다.</p>
+    <p class="muted small">끄면 Medium·Low 추정 좌표(화장실·시설)는 지도와 목록에서 숨겨지고 High만 표시됩니다. 어트랙션은 항상 대략적 위치로 표시됩니다.</p>
+    <button class="btn" id="map-reset" type="button">지도 초기화</button>
+    <p class="muted small">선택한 파크 전체가 보기 좋은 범위로 돌아옵니다. 경로·선택도 함께 지워집니다.</p>
 
     <h3 class="sheet-h3">지도 라벨 표기</h3>
     <div class="chips" role="group" aria-label="지도 라벨 표기">
@@ -288,7 +308,9 @@ function renderSettings() {
     <h3 class="sheet-h3">데이터 현황</h3>
     <div class="notice">
       <p><strong>TDL</strong> 화장실 9곳 지도 기반 추정(대략 5~10m), 추가 검증 4곳, 미확인 1곳(비표시). 중앙구호실 1곳.</p>
-      <p><strong>TDS</strong> 화장실·응급시설 검증 좌표 준비 중(미표시). 어트랙션 위치는 대략적 추정입니다.</p>
+      <p><strong>TDS</strong> 화장실 10곳·베이비케어 2곳·중앙구호실 1곳 — 공식 PDF 기반 추정(Google POI 미확인). 기본 지도는 High만 표시하므로 "추정 위치 포함"을 켜야 보입니다.</p>
+      <p><strong>키 기준</strong> 공식 FAQ(2026-08-01) 기준으로 운영 어트랙션 전수 반영. 레이징 스피리츠는 117~195cm.</p>
+      <p><strong>보행 경로</strong> 파크별 부분 보행 그래프(주요 간선). 미연결 구간은 직선 방향 안내로 전환됩니다.</p>
       <p><strong>운영 종료·장기 휴장</strong> 스페이스 마운틴·버즈 라이트이어(TDL), 머메이드 라군 시어터(TDS)는 기본 목록·지도에서 제외했습니다.</p>
       <p class="small">모든 좌표는 실측 GPS가 아니며 참고용입니다. 실시간 대기시간·운영 여부는 공식 앱에서 확인하세요.</p>
     </div>`;
@@ -299,12 +321,14 @@ function renderDetail(id) {
   if (!poi) { openTab(state.prevTab); return; }
   const withArea = getPois(state.park).find((p) => p.id === id) || poi;
   els.sheetTitle.textContent = withArea.nameKo || withArea.name;
+  const routeInfo = (state.routeId === id && state.routeInfo) ? state.routeInfo : null;
   const common = {
     isFav: store.isFavorite(id),
     inVisit: store.inVisitList(id),
     distance: distanceTo(withArea),
     userCoords: state.user && state.user.coords,
     direction: directionFor(withArea),
+    routeInfo,
   };
   if (withArea.type === 'attraction') {
     els.sheetBody.innerHTML = ui.attractionDetail(withArea, { children: store.getChildren(), visitDate: store.getVisitDate(), ...common });
@@ -315,7 +339,7 @@ function renderDetail(id) {
 
 function renderSearch() {
   const q = state.query;
-  const atts = getAllAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, { isFavorite: (id) => store.isFavorite(id) }));
+  const atts = getAllAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, filterCtx()));
   const facs = visibleFacilities().filter((p) => matchText(p, q));
   let items = withDistance([...atts, ...facs], state.user && state.user.coords);
   if (getFilters().attraction.nearest || getFilters().facility.nearest) items = sortByDistance(items);
@@ -392,12 +416,20 @@ function selectPoi(id) {
 }
 
 // ---- park switch ----
+function clearNavLines() {
+  state.directionId = null;
+  state.routeId = null;
+  state.routeInfo = null;
+  map.clearDirection();
+  map.clearRoute();
+}
+
 function setPark(p) {
   if (p === state.park) return;
   state.park = p;
   state.selectedId = null;
-  state.directionId = null;
-  map.clearDirection();
+  state.outsideParkChoice = null;
+  clearNavLines();
   store.setPark(p);
   els.parkToggle.querySelectorAll('button').forEach((b) => {
     const on = b.dataset.park === p;
@@ -412,14 +444,107 @@ function setPark(p) {
   toast(`${PARKS[p].nameKo}로 전환했습니다`);
 }
 
-// ---- direction ----
+function resetMapView() {
+  clearNavLines();
+  state.selectedId = null;
+  map.resetView(parkMeta());
+  syncLabelOptions();
+  toast('지도를 초기화했습니다');
+}
+
+function isInsidePark(coords) {
+  if (!coords) return false;
+  const meta = parkMeta();
+  const [[s1, w1], [n1, e1]] = meta.bounds;
+  return coords[0] >= s1 && coords[0] <= n1 && coords[1] >= w1 && coords[1] <= e1;
+}
+
+function routeStartCoords() {
+  if (state.outsideParkChoice === 'entrance' && parkMeta().entranceCoordinates) {
+    return parkMeta().entranceCoordinates;
+  }
+  if (state.user && state.user.coords && isInsidePark(state.user.coords)) {
+    return state.user.coords;
+  }
+  if (state.user && state.user.coords && state.outsideParkChoice === 'entrance') {
+    return parkMeta().entranceCoordinates;
+  }
+  return null;
+}
+
+// ---- direction / walk route ----
 function showDirection(id) {
   const poi = getPoiById(state.park, id);
   if (!poi || !poi.coordinates) return;
   if (!state.user) { toast('먼저 현재 위치를 켜 주세요'); return; }
   state.directionId = id;
+  state.routeId = null;
+  state.routeInfo = null;
+  map.clearRoute();
   map.showDirection(state.user.coords, poi.coordinates);
   renderDetail(id);
+}
+
+function showRoute(id) {
+  const poi = getPoiById(state.park, id);
+  if (!poi || !poi.coordinates) return;
+
+  if (!state.user) {
+    toast('현재 위치가 없습니다. 위치를 켜거나, 파크 입구부터 경로를 볼 수 있어요.');
+    // Offer entrance start when no GPS
+    state.outsideParkChoice = 'entrance';
+  } else if (!isInsidePark(state.user.coords) && state.outsideParkChoice !== 'entrance') {
+    // Prompt via toast + auto offer entrance option in detail by setting choice prompt
+    state.routeInfo = {
+      mode: 'direction',
+      reason: '현재 위치가 선택한 파크 밖에 있습니다. 아래에서 "파크 입구부터 경로 보기"를 선택하거나, 다른 파크로 전환해 주세요.',
+    };
+    state.routeId = id;
+    map.clearRoute();
+    map.clearDirection();
+    renderDetail(id);
+    // Inject choice buttons after render
+    injectOutsideParkChoices(id);
+    return;
+  }
+
+  const from = routeStartCoords() || parkMeta().entranceCoordinates;
+  if (!from) { toast('출발 위치를 확인할 수 없습니다'); return; }
+
+  const graph = WALK_GRAPHS[state.park];
+  const result = routeToPoi(graph, from, poi);
+  state.directionId = null;
+  state.routeId = id;
+  if (result.ok) {
+    state.routeInfo = {
+      mode: 'walk',
+      distance: result.distance,
+      confidence: result.confidence,
+      coverageNote: result.coverageNote,
+    };
+    map.showRoute(result.path);
+    toast(`예상 보행거리 ${formatDistance(result.distance)}`);
+  } else {
+    // Fallback to dashed direction
+    state.routeInfo = { mode: 'direction', reason: result.reason };
+    const dirFrom = state.user ? state.user.coords : from;
+    map.showDirection(dirFrom, poi.coordinates);
+    toast('경로를 만들 수 없어 직선 방향으로 안내합니다');
+  }
+  renderDetail(id);
+}
+
+function injectOutsideParkChoices(id) {
+  const host = els.sheetBody.querySelector('.route-card');
+  if (!host) return;
+  const box = document.createElement('div');
+  box.className = 'outside-choices';
+  box.innerHTML = `
+    <p class="detail-note"><strong>현재 위치가 선택한 파크 밖에 있습니다.</strong></p>
+    <button class="btn btn-primary" data-act="route-from-entrance" data-poi="${ui.esc(id)}" type="button">파크 입구부터 경로 보기</button>
+    <button class="btn" data-act="keep-map" type="button">현재 위치는 유지하고 파크 지도 보기</button>
+    <button class="btn" data-act="switch-other-park" type="button">다른 파크로 전환</button>`;
+  host.appendChild(box);
 }
 
 // ---- location ----
@@ -445,15 +570,18 @@ function toggleLocation() {
     onPosition: ({ coords, accuracy }) => {
       const first = !state.user;
       state.user = { coords, accuracy };
+      // Always update the blue dot if somehow in view, but never pan outside maxBounds.
       map.setUserLocation(coords, accuracy);
       let msg = `현재 위치 확인됨 (정확도 약 ${Math.round(accuracy)}m)`;
       if (accuracy > 60) msg += ' · 정확도가 낮습니다';
-      const meta = parkMeta();
-      const [[s1, w1], [n1, e1]] = meta.bounds;
-      const inside = coords[0] >= s1 && coords[0] <= n1 && coords[1] >= w1 && coords[1] <= e1;
-      if (!inside) msg += ' · 파크 외부로 보입니다';
+      const inside = isInsidePark(coords);
+      if (!inside) {
+        msg = '현재 위치가 선택한 파크 밖에 있습니다.';
+        // Do not auto-pan the map to chase out-of-park GPS.
+      } else if (first) {
+        map.centerOnUser(coords);
+      }
       setLocStatus(msg);
-      if (first) map.centerOnUser(coords);
       renderMap();
       if (state.tab === 'detail') renderDetail(state.selectedId);
     },
@@ -470,7 +598,7 @@ function setLocStatus(s) {
 function toggleAttractionFilter(key) {
   const f = getFilters().attraction;
   if (key.startsWith('h-')) {
-    const val = key.slice(2);
+    const val = key.slice(2); // none | 81 | 90 | child:0 | all-children | unverified ...
     f.height = f.height === val ? null : val;
   } else {
     f[key] = !f[key];
@@ -537,13 +665,18 @@ function bindEvents() {
       return;
     }
 
-    // detail action buttons (fav/direction/visit) — check data-act first
+    // detail action buttons (fav/route/direction/visit) — check data-act first
     const act = t.closest('button[data-act]');
     if (act) {
       const id = act.dataset.poi;
       if (act.dataset.act === 'fav') { const on = store.toggleFavorite(id); toast(on ? '즐겨찾기에 추가' : '즐겨찾기 해제'); renderDetail(id); syncLabelOptions(); }
+      if (act.dataset.act === 'route') showRoute(id);
       if (act.dataset.act === 'direction') showDirection(id);
       if (act.dataset.act === 'visit') { const on = store.toggleVisit(id); toast(on ? '방문 목록에 추가' : '방문 목록에서 제거'); renderDetail(id); }
+      if (act.dataset.act === 'clear-route') { clearNavLines(); if (state.selectedId) renderDetail(state.selectedId); toast('경로를 지웠습니다'); }
+      if (act.dataset.act === 'route-from-entrance') { state.outsideParkChoice = 'entrance'; showRoute(id); }
+      if (act.dataset.act === 'keep-map') { state.outsideParkChoice = 'keep'; clearNavLines(); toast('파크 지도를 유지합니다'); map.resetView(parkMeta()); }
+      if (act.dataset.act === 'switch-other-park') { setPark(state.park === 'TDL' ? 'TDS' : 'TDL'); }
       return;
     }
 
@@ -584,6 +717,7 @@ function bindEvents() {
       const c = store.getChildren(); c.push({ name: '새 아이', height: 100 }); store.setChildren(c); renderSettings();
     }
     if (e.target.id === 'child-save') { saveChildren(); toast('아이 프로필을 저장했습니다'); }
+    if (e.target.id === 'map-reset') { resetMapView(); }
     const crm = e.target.closest('[data-child-remove]');
     if (crm) { const c = store.getChildren(); c.splice(Number(crm.dataset.childRemove), 1); store.setChildren(c); renderSettings(); }
   });
@@ -607,6 +741,8 @@ function saveChildren() {
     height: Math.max(50, Math.min(200, Number(heights[i].value) || 100)),
   }));
   store.setChildren(children);
+  // Child-based height filters must recompute immediately.
+  if (state.tab === 'attractions' || state.tab === 'search' || state.tab === 'filter') renderSheet();
 }
 
 function applyTheme(theme) {

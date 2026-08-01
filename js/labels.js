@@ -50,24 +50,32 @@ export function confidenceBand(score, status) {
   return { key: 'low', label: '낮음' };
 }
 
-// Ride eligibility for a child, from an attraction record.
+// Normalize legacy 'none' -> 'no_restriction'.
+export function heightStatusOf(attraction) {
+  const s = attraction && attraction.heightStatus;
+  if (s === 'none') return 'no_restriction';
+  return s || 'unverified';
+}
+
+// Ride eligibility for a child, from an attraction record (min + optional max).
 export function rideEligibility(attraction, childHeightCm) {
-  if (attraction.heightStatus === 'none' || attraction.heightMin == null) {
-    if (attraction.heightStatus === 'unverified') {
-      return { ok: null, label: '공식 정보 재확인 필요', cls: 'ride-unknown' };
-    }
-    return { ok: true, label: '키 제한 없음', cls: 'ride-ok' };
+  const status = heightStatusOf(attraction);
+  if (status === 'unverified') {
+    return { ok: null, label: '공식 키 기준 확인 필요', cls: 'ride-unknown' };
   }
-  if (attraction.heightStatus === 'unverified') {
-    return { ok: null, label: '공식 정보 재확인 필요', cls: 'ride-unknown' };
-  }
-  if (childHeightCm == null) {
-    return { ok: null, label: `${attraction.heightMin}cm 이상 필요`, cls: 'ride-unknown' };
-  }
-  if (childHeightCm >= attraction.heightMin) {
+  if (status === 'no_restriction' || (attraction.heightMin == null && attraction.heightMax == null)) {
     return { ok: true, label: '탑승 가능', cls: 'ride-ok' };
   }
-  return { ok: false, label: '키 제한 미달', cls: 'ride-no' };
+  if (childHeightCm == null) {
+    return { ok: null, label: heightTierLabel(attraction), cls: 'ride-unknown' };
+  }
+  if (attraction.heightMin != null && childHeightCm < attraction.heightMin) {
+    return { ok: false, label: '키 기준 미달', cls: 'ride-no' };
+  }
+  if (attraction.heightMax != null && childHeightCm > attraction.heightMax) {
+    return { ok: false, label: '최대 키 초과', cls: 'ride-no' };
+  }
+  return { ok: true, label: '탑승 가능', cls: 'ride-ok' };
 }
 
 // Pre-announced closure overlapping a visit date (YYYY-MM-DD). endDate null = TBD/ongoing.
@@ -94,7 +102,20 @@ export const OPERATING_STATUS_LABEL = {
 };
 
 export function heightTierLabel(attraction) {
-  if (attraction.heightStatus === 'unverified') return '키 제한 재확인 필요';
-  if (attraction.heightMin == null) return '키 제한 없음';
-  return `${attraction.heightMin}cm 이상`;
+  const status = heightStatusOf(attraction);
+  if (status === 'unverified') return '공식 키 기준 확인 필요';
+  if (status === 'no_restriction' || (attraction.heightMin == null && attraction.heightMax == null)) {
+    return '키 제한 없음';
+  }
+  if (attraction.heightMin != null && attraction.heightMax != null) {
+    return `${attraction.heightMin}~${attraction.heightMax}cm`;
+  }
+  if (attraction.heightMin != null) return `${attraction.heightMin}cm 이상`;
+  if (attraction.heightMax != null) return `${attraction.heightMax}cm 이하`;
+  return '공식 키 기준 확인 필요';
+}
+
+/** True if a child of given height can ride (strict: false for unverified). */
+export function childCanRide(attraction, childHeightCm) {
+  return rideEligibility(attraction, childHeightCm).ok === true;
 }

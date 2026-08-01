@@ -10,6 +10,7 @@ export const PARKS = {
     shortKo: '랜드',
     center: [35.63235, 139.88065],
     zoom: 16,
+    defaultZoom: 16,
     minZoom: 15,
     maxZoom: 19,
     // rough bounding box used only to detect "outside the park"
@@ -17,6 +18,18 @@ export const PARKS = {
       [35.6280, 139.8770],
       [35.6365, 139.8855],
     ],
+    // 지도를 처음/초기화 시 맞출 프레이밍(파크 전체가 보기 좋게)
+    defaultBounds: [
+      [35.62960, 139.87830],
+      [35.63530, 139.88400],
+    ],
+    // Leaflet maxBounds: 드래그로 이 밖으로 못 나가게 제한(파크+게이트+최소 주변)
+    maxBounds: [
+      [35.62880, 139.87680],
+      [35.63720, 139.88480],
+    ],
+    // 정문/게이트 근사 위치(월드바자 북측). 실측 아님.
+    entranceCoordinates: [35.63520, 139.87995],
     // theme lands (경계는 근사값이며 지도 프레이밍/라벨 용도)
     // labelCenter: 각 구역의 시각적 중심(라벨 앵커). 어트랙션 좌표 단순 평균이 아니라
     // 공식 PDF 배치와 현재 좌표를 함께 보고 조정한 근사값이며 실측 좌표는 아닙니다.
@@ -37,12 +50,23 @@ export const PARKS = {
     shortKo: '씨',
     center: [35.62670, 139.88540],
     zoom: 16,
+    defaultZoom: 16,
     minZoom: 15,
     maxZoom: 19,
     bounds: [
       [35.6230, 139.8815],
       [35.6310, 139.8905],
     ],
+    defaultBounds: [
+      [35.62480, 139.88250],
+      [35.62980, 139.88920],
+    ],
+    maxBounds: [
+      [35.62320, 139.88100],
+      [35.63060, 139.89020],
+    ],
+    // 정문/게이트 근사 위치(메디터레이니언 하버 서측, TDS 스테이션 방향). 실측 아님.
+    entranceCoordinates: [35.62680, 139.88250],
     areas: [
       { id: 'mediterranean-harbor', nameKo: '메디터레이니언 하버', nameEn: 'Mediterranean Harbor', labelCenter: [35.62760, 139.88360] },
       { id: 'american-waterfront', nameKo: '아메리칸 워터프런트', nameEn: 'American Waterfront', labelCenter: [35.62900, 139.88460] },

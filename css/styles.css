@@ -247,6 +247,10 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 .li-body { flex: 1; min-width: 0; }
 .li-name { display: block; font-weight: 700; overflow-wrap: anywhere; }
 .li-meta { display: block; font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
+.li-height { display: block; font-size: 12px; color: var(--primary); font-weight: 700; margin-top: 2px; }
+.height-lead { margin: 6px 0; font-size: 15px; }
+.outside-choices { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.route-line { filter: drop-shadow(0 1px 1px rgba(0,0,0,.25)); }
 .li-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .li-dist { font-size: 12px; color: var(--text-2); }
 .li-fav { color: #e6a800; }

@@ -261,67 +261,81 @@ export const TDL_BABYCARE = [
   },
 ];
 
-// heightStatus: 'official' (공식 확인), 'none' (제한 없음), 'unverified' (재확인 필요)
+// heightStatus: 'official' | 'no_restriction' | 'unverified'
+// Source of truth for operating height bands (checked 2026-08-01):
+// https://faq.tokyodisneyresort.jp/answer/67eaa66757951a27c885678c/
+const HFAQ = 'https://faq.tokyodisneyresort.jp/answer/67eaa66757951a27c885678c/';
+const HCK = '2026-08-01';
+const H_NR = { heightStatus: 'no_restriction', heightSourceUrl: HFAQ, heightCheckedAt: HCK };
+const H_OFF = (min, max = null) => ({
+  heightStatus: 'official', heightMin: min, heightMax: max,
+  heightSourceUrl: HFAQ, heightCheckedAt: HCK,
+});
+
 export const TDL_ATTRACTIONS = [
   // Adventureland
-  a('tdl-a-jungle', 'adventureland', '정글 크루즈: 와일드라이프 익스페디션', 'ジャングルクルーズ', 'Jungle Cruise', [35.63400, 139.88190], null, 'none', { indoor: false, kid: true, rainy: false }),
-  a('tdl-a-pirates', 'adventureland', '카리브의 해적', 'カリブの海賊', 'Pirates of the Caribbean', [35.63315, 139.88155], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-wrr', 'adventureland', '웨스턴 리버 철도', 'ウエスタンリバー鉄道', 'Western River Railroad', [35.63380, 139.88230], null, 'none', { indoor: false, kid: true, rainy: false }),
-  a('tdl-a-tiki', 'adventureland', '엔챈티드 티키 룸: 스티치 프레젠츠', 'スティッチ・プレゼンツ“アロハ・エ・コモ・マイ！”', 'The Enchanted Tiki Room', [35.63350, 139.88210], null, 'none', { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-jungle', 'adventureland', '정글 크루즈: 와일드라이프 익스페디션', 'ジャングルクルーズ', 'Jungle Cruise', [35.63400, 139.88190], H_NR, { indoor: false, kid: true, rainy: false }),
+  a('tdl-a-pirates', 'adventureland', '카리브의 해적', 'カリブの海賊', 'Pirates of the Caribbean', [35.63315, 139.88155], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-wrr', 'adventureland', '웨스턴 리버 철도', 'ウエスタンリバー鉄道', 'Western River Railroad', [35.63380, 139.88230], H_NR, { indoor: false, kid: true, rainy: false }),
+  a('tdl-a-tiki', 'adventureland', '엔챈티드 티키 룸: 스티치 프레젠츠', 'スティッチ・プレゼンツ“アロハ・エ・コモ・マイ！”', 'The Enchanted Tiki Room', [35.63350, 139.88210], H_NR, { indoor: true, kid: true, rainy: true }),
 
   // Westernland
-  a('tdl-a-btm', 'westernland', '빅 선더 마운틴', 'ビッグサンダー・マウンテン', 'Big Thunder Mountain', [35.63250, 139.88325], 102, 'official', { indoor: false, kid: false, thrill: true, rainy: false }),
-  a('tdl-a-marktwain', 'westernland', '증기선 마크 트웨인호', '蒸気船マークトウェイン号', 'Mark Twain Riverboat', [35.63180, 139.88295], null, 'none', { indoor: false, kid: true, rainy: false }),
-  a('tdl-a-tomsawyer', 'westernland', '톰 소여 섬 뗏목', 'トムソーヤ島いかだ', 'Tom Sawyer Island Rafts', [35.63155, 139.88320], null, 'none', { indoor: false, kid: true, rainy: false }),
-  a('tdl-a-countrybear', 'westernland', '컨트리베어 시어터', 'カントリーベア・シアター', 'Country Bear Theater', [35.63235, 139.88295], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-canoe', 'westernland', '비버 브라더스의 카누 익스플로러', 'ビーバーブラザーズのカヌー探険', 'Beaver Brothers Explorer Canoes', [35.63120, 139.88310], null, 'none', { indoor: false, kid: false, rainy: false }),
-  a('tdl-a-shootin', 'westernland', '웨스턴랜드 슈팅 갤러리', 'ウエスタンランド・シューティングギャラリー', 'Westernland Shootin\u2019 Gallery', [35.63255, 139.88300], null, 'none', { indoor: false, kid: true, rainy: false }),
+  a('tdl-a-btm', 'westernland', '빅 선더 마운틴', 'ビッグサンダー・マウンテン', 'Big Thunder Mountain', [35.63250, 139.88325], H_OFF(102), { indoor: false, kid: false, thrill: true, rainy: false }),
+  a('tdl-a-marktwain', 'westernland', '증기선 마크 트웨인호', '蒸気船マークトウェイン号', 'Mark Twain Riverboat', [35.63180, 139.88295], H_NR, { indoor: false, kid: true, rainy: false }),
+  a('tdl-a-tomsawyer', 'westernland', '톰 소여 섬 뗏목', 'トムソーヤ島いかだ', 'Tom Sawyer Island Rafts', [35.63155, 139.88320], H_NR, { indoor: false, kid: true, rainy: false }),
+  a('tdl-a-countrybear', 'westernland', '컨트리베어 시어터', 'カントリーベア・シアター', 'Country Bear Theater', [35.63235, 139.88295], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-canoe', 'westernland', '비버 브라더스의 카누 익스플로러', 'ビーバーブラザーズのカヌー探険', 'Beaver Brothers Explorer Canoes', [35.63120, 139.88310], H_NR, { indoor: false, kid: false, rainy: false }),
+  a('tdl-a-shootin', 'westernland', '웨스턴랜드 슈팅 갤러리', 'ウエスタンランド・シューティングギャラリー', 'Westernland Shootin\u2019 Gallery', [35.63255, 139.88300], H_NR, { indoor: false, kid: true, rainy: false }),
 
   // Critter Country
-  a('tdl-a-splash', 'critter-country', '스플래시 마운틴', 'スプラッシュ・マウンテン', 'Splash Mountain', [35.63030, 139.88350], 90, 'official', { indoor: false, kid: false, thrill: true, rainy: false }),
+  a('tdl-a-splash', 'critter-country', '스플래시 마운틴', 'スプラッシュ・マウンテン', 'Splash Mountain', [35.63030, 139.88350], H_OFF(90), { indoor: false, kid: false, thrill: true, rainy: false }),
 
   // Fantasyland
-  a('tdl-a-haunted', 'fantasyland', '헌티드 맨션', 'ホーンテッドマンション', 'Haunted Mansion', [35.63125, 139.88180], null, 'none', { indoor: true, kid: false, rainy: true }),
-  a('tdl-a-pooh', 'fantasyland', '푸의 허니 헌트', 'プーさんのハニーハント', 'Pooh\u2019s Hunny Hunt', [35.63080, 139.88135], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-peterpan', 'fantasyland', '피터팬 공중 여행', 'ピーターパン空の旅', 'Peter Pan\u2019s Flight', [35.63075, 139.88075], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-snowwhite', 'fantasyland', '백설공주와 일곱 난쟁이', '白雪姫と七人のこびと', 'Snow White\u2019s Adventures', [35.63065, 139.88095], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-pinocchio', 'fantasyland', '피노키오의 모험 여행', 'ピノキオの冒険旅行', 'Pinocchio\u2019s Daring Journey', [35.63090, 139.88035], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-smallworld', 'fantasyland', '잇츠 어 스몰 월드', 'イッツ・ア・スモールワールド', 'It\u2019s a Small World', [35.63110, 139.88010], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-philharmagic', 'fantasyland', '미키의 필하매직', 'ミッキーのフィルハーマジック', 'Mickey\u2019s PhilharMagic', [35.63120, 139.88045], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-alice', 'fantasyland', '앨리스의 티 파티', 'アリスのティーパーティー', 'Alice\u2019s Tea Party', [35.63095, 139.88060], null, 'none', { indoor: false, kid: true, rainy: false }),
-  a('tdl-a-carrousel', 'fantasyland', '캐슬 카루젤', 'キャッスルカルーセル', 'Castle Carrousel', [35.63130, 139.88095], null, 'none', { indoor: false, kid: true, rainy: false }),
+  a('tdl-a-haunted', 'fantasyland', '헌티드 맨션', 'ホーンテッドマンション', 'Haunted Mansion', [35.63125, 139.88180], H_NR, { indoor: true, kid: false, rainy: true }),
+  a('tdl-a-pooh', 'fantasyland', '푸의 허니 헌트', 'プーさんのハニーハント', 'Pooh\u2019s Hunny Hunt', [35.63080, 139.88135], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-peterpan', 'fantasyland', '피터팬 공중 여행', 'ピーターパン空の旅', 'Peter Pan\u2019s Flight', [35.63075, 139.88075], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-snowwhite', 'fantasyland', '백설공주와 일곱 난쟁이', '白雪姫と七人のこびと', 'Snow White\u2019s Adventures', [35.63065, 139.88095], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-pinocchio', 'fantasyland', '피노키오의 모험 여행', 'ピノキオの冒険旅行', 'Pinocchio\u2019s Daring Journey', [35.63090, 139.88035], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-smallworld', 'fantasyland', '잇츠 어 스몰 월드', 'イッツ・ア・スモールワールド', 'It\u2019s a Small World', [35.63110, 139.88010], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-philharmagic', 'fantasyland', '미키의 필하매직', 'ミッキーのフィルハーマジック', 'Mickey\u2019s PhilharMagic', [35.63120, 139.88045], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-alice', 'fantasyland', '앨리스의 티 파티', 'アリスのティーパーティー', 'Alice\u2019s Tea Party', [35.63095, 139.88060], H_NR, { indoor: false, kid: true, rainy: false }),
+  a('tdl-a-carrousel', 'fantasyland', '캐슬 카루젤', 'キャッスルカルーセル', 'Castle Carrousel', [35.63130, 139.88095], H_NR, { indoor: false, kid: true, rainy: false }),
 
   // Toontown
-  a('tdl-a-gadget', 'toontown', '개짓의 고 코스터', 'ガジェットのゴーコースター', 'Gadget\u2019s Go Coaster', [35.62995, 139.87990], 90, 'official', { indoor: false, kid: true, thrill: false, rainy: false }),
-  a('tdl-a-cartoonspin', 'toontown', '로저 래빗의 카툰 스핀', 'ロジャーラビットのカートゥーンスピン', 'Roger Rabbit\u2019s Car Toon Spin', [35.63000, 139.87960], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-meetmickey', 'toontown', '미키의 집과 미트 미키', 'ミッキーの家とミート・ミッキー', 'Mickey\u2019s House and Meet Mickey', [35.63030, 139.87940], null, 'none', { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-gadget', 'toontown', '개짓의 고 코스터', 'ガジェットのゴーコースター', 'Gadget\u2019s Go Coaster', [35.62995, 139.87990], H_OFF(90), { indoor: false, kid: true, thrill: false, rainy: false }),
+  a('tdl-a-cartoonspin', 'toontown', '로저 래빗의 카툰 스핀', 'ロジャーラビットのカートゥーンスピン', 'Roger Rabbit\u2019s Car Toon Spin', [35.63000, 139.87960], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-meetmickey', 'toontown', '미키의 집과 미트 미키', 'ミッキーの家とミート・ミッキー', 'Mickey\u2019s House and Meet Mickey', [35.63030, 139.87940], H_NR, { indoor: true, kid: true, rainy: true }),
 
   // Tomorrowland
-  a('tdl-a-space', 'tomorrowland', '스페이스 마운틴', 'スペース・マウンテン', 'Space Mountain', [35.63200, 139.87870], 102, 'official', { indoor: true, kid: false, thrill: true, rainy: true }, '2024년 7월 31일 클로즈되어 재건축 중이며 2027년 새 어트랙션으로 오픈 예정입니다.', {
+  a('tdl-a-space', 'tomorrowland', '스페이스 마운틴', 'スペース・マウンテン', 'Space Mountain', [35.63200, 139.87870], H_OFF(102), { indoor: true, kid: false, thrill: true, rainy: true }, '2024년 7월 31일 클로즈되어 재건축 중이며 2027년 새 어트랙션으로 오픈 예정입니다.', {
     operatingStatus: 'closed_longterm',
     closedInfo: { since: '2024-07-31', reopen: '2027', reason: '재건축(트루모로우랜드 재개발)', sourceUrl: 'https://www.tokyodisneyresort.jp/tdrblog/detail/pr220427/', checkedAt: '2026-07-31' },
   }),
-  a('tdl-a-buzz', 'tomorrowland', '버즈 라이트이어의 애스트로 블래스터', 'バズ・ライトイヤーのアストロブラスター', 'Buzz Lightyear\u2019s Astro Blasters', [35.63235, 139.87905], null, 'none', { indoor: true, kid: true, rainy: true }, '2024년 10월 31일 영구 클로즈되었습니다. 자리에 렉잇 랄프 테마 어트랙션이 2027년경 오픈 예정입니다.', {
+  a('tdl-a-buzz', 'tomorrowland', '버즈 라이트이어의 애스트로 블래스터', 'バズ・ライトイヤーのアストロブラスター', 'Buzz Lightyear\u2019s Astro Blasters', [35.63235, 139.87905], H_NR, { indoor: true, kid: true, rainy: true }, '2024년 10월 31일 영구 클로즈되었습니다. 자리에 렉잇 랄프 테마 어트랙션이 2027년경 오픈 예정입니다.', {
     operatingStatus: 'closed_longterm',
     closedInfo: { since: '2024-10-31', reopen: '2027(예정)', reason: '영구 종료 → 렉잇 랄프 신규 어트랙션', sourceUrl: 'https://www.tokyodisneyresort.jp/en/tdl/monthly/stop.html', checkedAt: '2026-07-31' },
   }),
-  a('tdl-a-monsters', 'tomorrowland', '몬스터 주식회사 라이드&고 시크!', 'モンスターズ・インク“ライド&ゴーシーク！”', 'Monsters, Inc. Ride & Go Seek!', [35.63250, 139.87880], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-stitch', 'tomorrowland', '스티치 인카운터', 'スティッチ・エンカウンター', 'Stitch Encounter', [35.63225, 139.87890], null, 'none', { indoor: true, kid: true, rainy: true }),
-  a('tdl-a-baymax', 'tomorrowland', '베이맥스의 해피 라이드', 'ベイマックスのハッピーライド', 'Baymax\u2019s Happy Ride', [35.63145, 139.87890], null, 'none', { indoor: false, kid: true, rainy: false }),
-  a('tdl-a-startours', 'tomorrowland', '스타 투어스: 더 어드벤처 컨티뉴', 'スター・ツアーズ：ザ・アドベンチャー・コンティニュー', 'Star Tours: The Adventures Continue', [35.63195, 139.87920], 102, 'official', { indoor: true, kid: false, thrill: true, rainy: true }),
+  a('tdl-a-monsters', 'tomorrowland', '몬스터 주식회사 라이드&고 시크!', 'モンスターズ・インク“ライド&ゴーシーク！”', 'Monsters, Inc. Ride & Go Seek!', [35.63250, 139.87880], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-stitch', 'tomorrowland', '스티치 인카운터', 'スティッチ・エンカウンター', 'Stitch Encounter', [35.63225, 139.87890], H_NR, { indoor: true, kid: true, rainy: true }),
+  a('tdl-a-baymax', 'tomorrowland', '베이맥스의 해피 라이드', 'ベイマックスのハッピーライド', 'Baymax\u2019s Happy Ride', [35.63145, 139.87890], H_OFF(81), { indoor: false, kid: true, rainy: false }),
+  a('tdl-a-startours', 'tomorrowland', '스타 투어스: 더 어드벤처 컨티뉴', 'スター・ツアーズ：ザ・アドベンチャー・コンティニュー', 'Star Tours: The Adventures Continue', [35.63195, 139.87920], H_OFF(102), { indoor: true, kid: false, thrill: true, rainy: true }),
 ];
 
-// factory: keeps attraction records compact + consistent.
-function a(id, area, nameKo, nameJa, nameEn, coordinates, heightMin, heightStatus, tags = {}, notes = '', opts = {}) {
+// factory: heightSpec is either H_NR / H_OFF(...) or a custom height opts object.
+function a(id, area, nameKo, nameJa, nameEn, coordinates, heightSpec = {}, tags = {}, notes = '', opts = {}) {
+  const h = heightSpec || {};
   return {
     id, park: 'TDL', area, type: 'attraction',
     nameKo, nameJa, nameEn,
     coordinates,
-    heightMin: heightMin ?? null,
-    heightStatus, // 'official' | 'none' | 'unverified'
-    heightSourceUrl: opts.heightSourceUrl || null,
-    heightCheckedAt: opts.heightCheckedAt || null,
-    heightNote: opts.heightNote || null,
+    heightMin: h.heightMin ?? null,
+    heightMax: h.heightMax ?? null,
+    heightStatus: h.heightStatus || 'unverified', // 'official' | 'no_restriction' | 'unverified'
+    heightSourceUrl: h.heightSourceUrl || opts.heightSourceUrl || null,
+    heightCheckedAt: h.heightCheckedAt || opts.heightCheckedAt || null,
+    heightNote: h.heightNote || opts.heightNote || null,
+    requiresIndependentSeating: !!(h.requiresIndependentSeating || opts.requiresIndependentSeating),
+    boardingRestrictions: h.boardingRestrictions || opts.boardingRestrictions || null,
     operatingStatus: opts.operatingStatus || 'operating', // 'operating' | 'closed_longterm'
     closedInfo: opts.closedInfo || null,
     closures: opts.closures || [],

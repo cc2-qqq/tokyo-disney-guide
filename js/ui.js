@@ -2,7 +2,7 @@
 import {
   COORD_STATUS_LABEL, COORD_STATUS_BADGE, ACCURACY_LABEL,
   TYPE_LABEL, confidenceBand, rideEligibility, heightTierLabel,
-  closureOnDate, formatDateKo, HEIGHT_MEASURE_NOTE,
+  heightStatusOf, closureOnDate, formatDateKo, HEIGHT_MEASURE_NOTE,
 } from './labels.js';
 import { formatDistance, compass8, bearingDegrees } from './geo.js';
 
@@ -33,6 +33,9 @@ export function listItem(poi, { distance, isFav, isDone } = {}) {
   let statusBadge = '';
   if (poi.operatingStatus === 'closed_longterm') statusBadge = '<span class="badge badge-closed">운영 종료</span>';
   else if (poi._closedOnVisit) statusBadge = '<span class="badge badge-closed">방문일 휴장</span>';
+  const heightMeta = poi.type === 'attraction'
+    ? `<span class="li-height">키 기준: ${esc(heightTierLabel(poi))}</span>`
+    : '';
   return `
     <li>
       <button class="li" data-poi="${esc(poi.id)}" type="button">
@@ -40,6 +43,7 @@ export function listItem(poi, { distance, isFav, isDone } = {}) {
         <span class="li-body">
           <span class="li-name">${name} ${favMark}${doneMark}</span>
           <span class="li-meta">${area ? esc(area) + ' · ' : ''}${esc(TYPE_LABEL[poi.type] || '')}${sub ? ' · ' + sub : ''}</span>
+          ${heightMeta}
         </span>
         <span class="li-right">${dist}${statusBadge}${badge(poi)}</span>
       </button>
@@ -90,13 +94,63 @@ function actionRow(poi, { isFav, inVisit } = {}, canDirection) {
       <button class="btn ${isFav ? 'btn-active' : ''}" data-act="fav" data-poi="${esc(poi.id)}" type="button" aria-pressed="${!!isFav}">
         <span aria-hidden="true">${isFav ? '\u2605' : '\u2606'}</span> 즐겨찾기
       </button>
+      <button class="btn btn-primary" data-act="route" data-poi="${esc(poi.id)}" type="button">
+        <span aria-hidden="true">\u{1F6B6}</span> 경로 보기
+      </button>
       <button class="btn" data-act="direction" data-poi="${esc(poi.id)}" type="button" ${canDirection ? '' : 'disabled'}>
-        <span aria-hidden="true">\u{1F9ED}</span> 방향 보기
+        <span aria-hidden="true">\u{1F9ED}</span> 방향만 보기
       </button>
       <button class="btn ${inVisit ? 'btn-active' : ''}" data-act="visit" data-poi="${esc(poi.id)}" type="button" aria-pressed="${!!inVisit}">
         <span aria-hidden="true">\u{1F4CB}</span> 내 방문 목록
       </button>
     </div>`;
+}
+
+function routeCard(routeInfo) {
+  if (!routeInfo) return '';
+  if (routeInfo.mode === 'direction') {
+    return `<div class="dir-card route-card" role="status">
+      <div class="dir-title">예상 보행 경로를 만들 수 없어 직선 방향으로 안내합니다</div>
+      <p class="dir-note">${esc(routeInfo.reason || '이 구간은 보행 그래프가 아직 준비되지 않았습니다.')}</p>
+      <button class="btn" data-act="clear-route" type="button">경로·방향 지우기</button>
+    </div>`;
+  }
+  return `<div class="dir-card route-card" role="status">
+      <div class="dir-title">예상 보행 경로</div>
+      <div class="dir-main"><strong>${esc(formatDistance(routeInfo.distance))}</strong>
+        ${routeInfo.confidence ? ` · 신뢰도 ${esc(routeInfo.confidence)}` : ''}</div>
+      <p class="dir-note">공식 디즈니 경로가 아닌 지도 자료 기반 예상 보행 경로입니다. 현장 통제와 실제 통로를 우선해 주세요.</p>
+      <button class="btn" data-act="clear-route" type="button">경로 지우기</button>
+    </div>`;
+}
+
+function heightBlock(poi, children) {
+  const status = heightStatusOf(poi);
+  const tier = heightTierLabel(poi);
+  const rides = (children || []).map((c) => {
+    const r = rideEligibility(poi, c.height);
+    return `<div class="ride-row ${r.cls}">
+        <span class="ride-name">${esc(c.name)} ${esc(c.height)}cm</span>
+        <span class="ride-verdict">${esc(r.label)}</span>
+      </div>`;
+  }).join('');
+  let lead = `<div class="height-lead"><strong>키 기준: ${esc(tier)}</strong></div>`;
+  if (status === 'no_restriction') {
+    lead += `<p class="detail-note">키 제한 없음${poi.requiresIndependentSeating || poi.boardingRestrictions
+      ? ' · 단, 혼자 안정적으로 앉을 수 있어야 하는 등 별도 조건이 있을 수 있습니다.'
+      : ''}</p>`;
+  }
+  if (poi.boardingRestrictions) {
+    lead += `<p class="detail-note">${esc(poi.boardingRestrictions)}</p>`;
+  }
+  const measure = (status === 'official' && (poi.heightMin != null || poi.heightMax != null))
+    ? `<p class="detail-note">\u2139\uFE0F ${esc(HEIGHT_MEASURE_NOTE)}${poi.heightSourceUrl ? ` <a href="${esc(poi.heightSourceUrl)}" target="_blank" rel="noopener">공식 키 제한 안내</a>` : ''}</p>`
+    : (poi.heightSourceUrl ? `<p class="detail-note"><a href="${esc(poi.heightSourceUrl)}" target="_blank" rel="noopener">공식 안내</a></p>` : '');
+  return `
+      <h3 class="detail-h3">아이별 탑승 가능 여부</h3>
+      ${lead}
+      <div class="ride-list">${rides || '<div class="empty">아이 프로필이 없습니다. 설정에서 추가해 주세요.</div>'}</div>
+      ${measure}`;
 }
 
 function closedBanner(poi) {
@@ -120,15 +174,8 @@ function closureWarning(closure) {
     </div>`;
 }
 
-export function attractionDetail(poi, { children, isFav, inVisit, distance, userCoords, direction, visitDate }) {
+export function attractionDetail(poi, { children, isFav, inVisit, distance, userCoords, direction, visitDate, routeInfo }) {
   const closure = closureOnDate(poi, visitDate);
-  const rides = (children || []).map((c) => {
-    const r = rideEligibility(poi, c.height);
-    return `<div class="ride-row ${r.cls}">
-        <span class="ride-name">${esc(c.name)} (${esc(c.height)}cm)</span>
-        <span class="ride-verdict">${esc(r.label)}</span>
-      </div>`;
-  }).join('');
   const distLine = distance != null
     ? `<div class="dg-k">현재 위치에서</div><div class="dg-v">직선거리 ${esc(formatDistance(distance))}</div>`
     : `<div class="dg-k">현재 위치에서</div><div class="dg-v">현재 위치를 켜면 직선거리를 볼 수 있어요</div>`;
@@ -151,12 +198,11 @@ export function attractionDetail(poi, { children, isFav, inVisit, distance, user
         ${poi.kidFriendly ? '<span class="tag tag-kid">어린이 추천</span>' : ''}
       </div>
 
-      <h3 class="detail-h3">아이별 탑승 가능 여부</h3>
-      <div class="ride-list">${rides || '<div class="empty">아이 프로필이 없습니다. 설정에서 추가해 주세요.</div>'}</div>
-      ${poi.heightMin != null && poi.heightStatus === 'official' ? `<p class="detail-note">\u2139\uFE0F ${esc(HEIGHT_MEASURE_NOTE)}${poi.heightSourceUrl ? ` <a href="${esc(poi.heightSourceUrl)}" target="_blank" rel="noopener">공식 키 제한 안내</a>` : ''}</p>` : ''}
+      ${heightBlock(poi, children)}
 
       <div class="detail-grid">${distLine}</div>
       ${confChip(poi)}
+      ${routeCard(routeInfo)}
       ${directionCard(direction)}
       ${actionRow(poi, { isFav, inVisit }, !!userCoords)}
       ${poi.notes ? `<p class="detail-note">${esc(poi.notes)}</p>` : ''}
@@ -164,7 +210,7 @@ export function attractionDetail(poi, { children, isFav, inVisit, distance, user
     </div>`;
 }
 
-export function facilityDetail(poi, { isFav, inVisit, distance, userCoords, direction }) {
+export function facilityDetail(poi, { isFav, inVisit, distance, userCoords, direction, routeInfo }) {
   const yn = (v) => v === true ? '있음' : v === false ? '없음' : '확인 필요';
   const rows = [
     ['시설 종류', TYPE_LABEL[poi.type] || ''],
@@ -193,6 +239,7 @@ export function facilityDetail(poi, { isFav, inVisit, distance, userCoords, dire
       <div class="detail-grid">${grid}${distLine}</div>
       ${confChip(poi)}
       ${poi.evidence ? `<div class="detail-grid"><div class="dg-k">위치 확인 근거</div><div class="dg-v">${esc(poi.evidence)}</div></div>` : ''}
+      ${routeCard(routeInfo)}
       ${directionCard(direction)}
       ${actionRow(poi, { isFav, inVisit }, !!userCoords)}
       ${poi.notes ? `<p class="detail-note">${esc(poi.notes)}</p>` : ''}
