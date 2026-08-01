@@ -112,6 +112,7 @@ function syncLabelOptions() {
   map.setLabelOptions({
     selectedId: state.selectedId,
     favIds: new Set(store.getFavorites()),
+    mapLabelMode: store.getSettings().mapLabelMode || 'ko',
   });
 }
 
@@ -310,7 +311,15 @@ function renderSettings() {
     <p class="muted small">선택한 파크 전체가 보기 좋은 범위로 돌아옵니다. 경로·선택도 함께 지워집니다.</p>
 
     <h3 class="sheet-h3">지도 라벨</h3>
-    <p class="muted small">배경지도는 글자 없는 구조 지도이며, 지도 위 이름은 <strong>한국어만</strong> 표시합니다. 일본어·영어 이름은 시설 상세 카드에서만 보조 정보로 확인할 수 있어요.</p>
+    <p class="muted small">벡터 배경의 식당·상점·건물·도로 등 상세 정보는 유지하고, 이름은 선택한 언어 우선순위로 표시합니다. 어트랙션·화장실은 앱 마커가 우선입니다.</p>
+    <div class="chips">
+      ${[
+        ['ko', '한국어 우선'],
+        ['ko_ja', '한국어 + 일본어'],
+        ['ja', '일본어 원문'],
+      ].map(([v, label]) => `<button class="chip ${(s.mapLabelMode || 'ko') === v ? 'chip-on' : ''}" data-map-label="${v}" type="button">${label}</button>`).join('')}
+    </div>
+    <p class="muted small">기본값은 <strong>한국어 우선</strong>입니다. 일본어 원문 데이터는 삭제되지 않으며, 상세 카드나 「한국어 + 일본어」 모드에서 확인할 수 있어요.</p>
 
     <h3 class="sheet-h3">테마</h3>
     <div class="chips">
@@ -319,7 +328,7 @@ function renderSettings() {
 
     <h3 class="sheet-h3">오프라인 사용 안내</h3>
     <div class="notice">
-      <p>앱 셸·데이터는 오프라인에서도 동작합니다. 벡터 배경(PMTiles)은 Range 요청으로 구간만 받으며 Service Worker에 전체 파일을 미리 넣지 않습니다. 배경 로딩에 실패하면 일본어 지도 대신 단색 배경과 한국어 마커·목록을 표시합니다.</p>
+      <p>앱 셸·데이터는 오프라인에서도 동작합니다. 벡터 배경(PMTiles)은 Range 요청으로 구간만 받으며 Service Worker에 전체 파일을 미리 넣지 않습니다. 배경 로딩에 실패하면 단색 배경과 앱 마커·목록으로 계속할 수 있습니다.</p>
     </div>
 
     <h3 class="sheet-h3">데이터 현황</h3>
@@ -730,11 +739,20 @@ function bindEvents() {
     const vbtn = t.closest('.vbtn[data-poi]');
     if (vbtn) { selectPoi(vbtn.dataset.poi); return; }
 
-    // settings: theme (also refreshes unlabeled vector basemap flavor)
+    // settings: theme (also refreshes vector basemap flavor)
     const themeBtn = t.closest('button[data-theme]');
     if (themeBtn) {
       store.setSettings({ theme: themeBtn.dataset.theme });
       applyTheme(themeBtn.dataset.theme);
+      renderSettings();
+      syncLabelOptions();
+      return;
+    }
+    const labelBtn = t.closest('button[data-map-label]');
+    if (labelBtn) {
+      const mode = labelBtn.dataset.mapLabel || 'ko';
+      store.setSettings({ mapLabelMode: mode });
+      if (map && typeof map.setBasemapLabelMode === 'function') map.setBasemapLabelMode(mode);
       renderSettings();
       syncLabelOptions();
       return;
@@ -804,6 +822,7 @@ function init() {
   // Create the map first, then apply theme so basemap flavor can sync safely.
   map.init(parkMeta(), {
     theme: store.getSettings().theme,
+    labelMode: store.getSettings().mapLabelMode || 'ko',
     onTileError: () => toast('벡터 배경지도를 불러오지 못했습니다. 단색 배경과 한국어 마커·목록으로 계속할 수 있어요.', 4000),
   });
   applyTheme(store.getSettings().theme);

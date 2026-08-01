@@ -1,7 +1,12 @@
 // Leaflet map wrapper. Uses divIcon markers (no external marker images needed).
-// Basemap: unlabeled Protomaps PMTiles via MapLibre (NOT OSM Japanese raster).
+// Basemap: localized Protomaps PMTiles via MapLibre (NOT OSM Japanese raster).
 /* global L */
-import { ensurePmtilesProtocol, buildUnlabeledStyle, solidFallbackStyle } from './basemap.js';
+import {
+  ensurePmtilesProtocol,
+  buildLocalizedStyle,
+  solidFallbackStyle,
+  LABEL_MODES,
+} from './basemap.js';
 
 const ICONS = {
   attraction: { glyph: '\u{1F3A0}', cls: 'm-attraction', label: '어트랙션' },
@@ -31,9 +36,10 @@ export function createMapController(elId) {
   let onBasemapError = null;
   let currentTheme = 'auto';
   let currentParkId = 'TDL';
+  let currentLabelMode = LABEL_MODES.KO_FIRST;
 
-  // ---- Korean self-drawn label layer state ----
-  // Basemap is unlabeled vector structure only; these are the only map texts.
+  // ---- App overlay labels (attractions / selected facilities).
+  // Vector basemap keeps restaurants/shops/roads; attractions+toilets stay app-owned.
   const labelState = {
     parkMeta: null,
     areas: [],
@@ -42,12 +48,13 @@ export function createMapController(elId) {
     landmark: new Set(),
     selectedId: null,
     favIds: new Set(),
-    mapLang: 'ko', // always Korean-only on the map
+    mapLabelMode: LABEL_MODES.KO_FIRST,
   };
 
-  function applyBasemapStyle(parkId, theme, { fallback = false } = {}) {
+  function applyBasemapStyle(parkId, theme, { fallback = false, labelMode } = {}) {
     currentParkId = parkId || currentParkId;
     currentTheme = theme || currentTheme;
+    if (labelMode) currentLabelMode = labelMode;
     if (!map) return;
     if (typeof L.maplibreGL !== 'function') {
       useSolidFallback('MapLibre GL Leaflet plugin missing');
@@ -58,7 +65,7 @@ export function createMapController(elId) {
       if (!fallback) ensurePmtilesProtocol();
       style = fallback
         ? solidFallbackStyle(currentTheme)
-        : buildUnlabeledStyle(currentParkId, currentTheme);
+        : buildLocalizedStyle(currentParkId, currentTheme, currentLabelMode);
     } catch (err) {
       useSolidFallback(err && err.message);
       return;
@@ -102,9 +109,11 @@ export function createMapController(elId) {
     onBasemapError && onBasemapError(reason || 'vector basemap failed');
   }
 
-  function init(parkMeta, { onTileError: cb, theme } = {}) {
+  function init(parkMeta, { onTileError: cb, theme, labelMode } = {}) {
     onBasemapError = cb;
     currentTheme = theme || 'auto';
+    currentLabelMode = labelMode || LABEL_MODES.KO_FIRST;
+    labelState.mapLabelMode = currentLabelMode;
     currentParkId = parkMeta.id || 'TDL';
     map = L.map(elId, {
       center: parkMeta.center,
@@ -128,7 +137,7 @@ export function createMapController(elId) {
       );
     }
 
-    // Unlabeled vector PMTiles basemap (no Japanese raster tiles).
+    // Localized vector PMTiles basemap (no Japanese OSM raster tiles).
     applyBasemapStyle(currentParkId, currentTheme);
 
     markerGroup = L.layerGroup().addTo(map);
@@ -155,7 +164,7 @@ export function createMapController(elId) {
     currentParkId = parkMeta.id || currentParkId;
     clearRoute();
     clearDirection();
-    // Apply this park's drag limits, then swap unlabeled basemap + frame.
+    // Apply this park's drag limits, then swap localized basemap + frame.
     map.setMinZoom(parkMeta.minZoom);
     map.setMaxZoom(parkMeta.maxZoom);
     map.setMaxBounds(parkMeta.maxBounds ? L.latLngBounds(parkMeta.maxBounds) : null);
@@ -168,6 +177,15 @@ export function createMapController(elId) {
     if (!map) return; // theme may be applied before Leaflet init
     if (!basemapFailed) applyBasemapStyle(currentParkId, currentTheme);
     else applyBasemapStyle(currentParkId, currentTheme, { fallback: true });
+  }
+
+  function setBasemapLabelMode(mode) {
+    currentLabelMode = mode || LABEL_MODES.KO_FIRST;
+    labelState.mapLabelMode = currentLabelMode;
+    if (!map) return;
+    if (!basemapFailed) applyBasemapStyle(currentParkId, currentTheme);
+    else applyBasemapStyle(currentParkId, currentTheme, { fallback: true });
+    renderLabels();
   }
 
   // Frame the park nicely (used on switch + "지도 초기화").
@@ -315,11 +333,10 @@ export function createMapController(elId) {
     renderLabels();
   }
 
-  function setLabelOptions({ selectedId, favIds } = {}) {
+  function setLabelOptions({ selectedId, favIds, mapLabelMode } = {}) {
     if (selectedId !== undefined) labelState.selectedId = selectedId;
     if (favIds !== undefined) labelState.favIds = favIds instanceof Set ? favIds : new Set(favIds || []);
-    // Map labels are Korean-only; Japanese names stay in detail cards.
-    labelState.mapLang = 'ko';
+    if (mapLabelMode !== undefined) labelState.mapLabelMode = mapLabelMode;
     renderLabels();
   }
 
@@ -346,20 +363,45 @@ export function createMapController(elId) {
     const out = [];
     if (!s.parkMeta) return out;
 
+    // ko-first: Korean-only on map (JP in detail cards). ko_ja: bilingual overlay.
+    const showJaSub = s.mapLabelMode === LABEL_MODES.KO_JA;
+    const jaOnly = s.mapLabelMode === LABEL_MODES.JA;
+
+    function mainText(poi) {
+      if (jaOnly) return poi.nameJa || poi.name || poi.nameKo;
+      return poi.nameKo || poi.nameEn || poi.name || poi.nameJa;
+    }
+    function subText(poi) {
+      if (!showJaSub || jaOnly) return null;
+      const ja = poi.nameJa || poi.name;
+      const main = mainText(poi);
+      if (!ja || ja === main) return null;
+      return ja;
+    }
+
     if (zoom <= 15 && s.parkMeta.center) {
-      out.push({ key: '__park', kind: 'park', latlng: s.parkMeta.center, text: s.parkMeta.nameKo, sub: null, priority: 0 });
+      out.push({
+        key: '__park', kind: 'park', latlng: s.parkMeta.center,
+        text: jaOnly ? (s.parkMeta.nameJa || s.parkMeta.nameKo) : s.parkMeta.nameKo,
+        sub: null, priority: 0,
+      });
     }
     if (zoom >= 16) {
       for (const ar of s.areas) {
         if (!ar.labelCenter) continue;
-        out.push({ key: 'area:' + ar.id, kind: 'area', latlng: ar.labelCenter, text: ar.nameKo, sub: null, priority: 2 });
+        out.push({
+          key: 'area:' + ar.id, kind: 'area', latlng: ar.labelCenter,
+          text: jaOnly ? (ar.nameJa || ar.nameEn || ar.nameKo) : ar.nameKo,
+          sub: null, priority: 2,
+        });
       }
     }
-    const showRep = zoom >= 17;
-    const showAll = zoom >= 18;
+    // App attraction labels (vector attraction names are hidden in basemap).
+    const showRep = zoom >= 16;
+    const showAll = zoom >= 17;
     for (const at of s.attractions) {
       if (!at.coordinates) continue;
-      if ((at.operatingStatus || 'operating') !== 'operating') continue; // exclude closed/long-term
+      if ((at.operatingStatus || 'operating') !== 'operating') continue;
       const isFav = s.favIds.has(at.id);
       const isRep = s.landmark.has(at.id);
       let include = false; let priority = 5;
@@ -367,7 +409,10 @@ export function createMapController(elId) {
       if (isRep && showRep) { include = true; priority = Math.min(priority, 4); }
       if (showAll) { include = true; priority = Math.min(priority, 5); }
       if (include) {
-        out.push({ key: 'at:' + at.id, kind: 'attr', latlng: at.coordinates, text: at.nameKo, sub: null, priority });
+        out.push({
+          key: 'at:' + at.id, kind: 'attr', latlng: at.coordinates,
+          text: mainText(at), sub: subText(at), priority,
+        });
       }
     }
     // Selected POI (attraction or facility) always shown, highest priority.
@@ -379,8 +424,8 @@ export function createMapController(elId) {
           key: (sel.type === 'attraction' ? 'at:' : 'fac:') + sel.id,
           kind: sel.type === 'attraction' ? 'attr' : 'facility',
           latlng: sel.coordinates,
-          text: sel.nameKo || sel.name,
-          sub: null,
+          text: mainText(sel),
+          sub: subText(sel),
           priority: 1, selected: true,
         });
       }
@@ -427,7 +472,7 @@ export function createMapController(elId) {
   function invalidate() { if (map) setTimeout(() => { map.invalidateSize(); renderLabels(); }, 50); }
 
   return {
-    init, setPark, setBasemapTheme, resetView, renderMarkers, highlight, focusPoi,
+    init, setPark, setBasemapTheme, setBasemapLabelMode, resetView, renderMarkers, highlight, focusPoi,
     setUserLocation, centerOnUser, showDirection, clearDirection,
     showRoute, clearRoute, invalidate,
     setLabelSources, setLabelOptions, renderLabels,

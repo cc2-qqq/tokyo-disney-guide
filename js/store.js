@@ -37,7 +37,8 @@ const DEFAULT_CHILDREN = [
 const DEFAULT_SETTINGS = {
   includeEstimated: false, // 낮은 신뢰도(Low, 및 TDL Medium)까지 표시
   theme: 'auto', // 'auto' | 'light' | 'dark'
-  // mapLang removed: map is Korean-only; JP/EN names stay in detail cards
+  // Vector basemap label language: Korean-first (keeps JP as data / high-zoom aux).
+  mapLabelMode: 'ko', // 'ko' | 'ko_ja' | 'ja'
 };
 
 export const store = {

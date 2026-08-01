@@ -132,8 +132,12 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
   color: #10202e;
   text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 4px #fff, 0 1px 2px rgba(255,255,255,.95);
 }
-.map-label .ml-main { display: block; }
-.map-label .ml-sub { display: block; font-weight: 600; font-size: .8em; opacity: .82; }
+.map-label .ml-main { display: block; max-width: max-content; }
+.map-label .ml-sub {
+  display: block; font-weight: 500; font-size: .72em; opacity: .62;
+  letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
 
 .map-label-attr, .map-label-facility {
   transform: translate(-50%, 10px); font-size: 12px; max-width: 96px; overflow-wrap: anywhere;
