@@ -259,11 +259,14 @@ function facilityCountSummary() {
   const shownBaby = visibleFacilities({ restroomTabOnly: true }).filter((f) => f.type === 'babyCare');
   const bands = facilityBandCounts(restroomsKnown);
   const pdfConfirmed = restroomsAll.filter((f) => f.pdfVerified).length;
+  const guestDenom = restroomsAll.filter((f) => f.generalGuestAccessible !== false).length;
+  const hotelOnly = restroomsAll.filter((f) => f.hotelOnly || f.generalGuestAccessible === false).length;
   return `<div class="facility-count notice">
-      <p><strong>화장실 ${shownRestrooms.length}곳</strong> · 베이비케어·수유실 ${shownBaby.length}곳</p>
-      <p class="small">응급시설(중앙구호실 등) ${aidAll.length}곳 — 화장실 탭·개수에서 제외, 지도 탭에서 표시</p>
-      <p class="small">공식 지도 확인 화장실 ${pdfConfirmed}곳 · 현재 지도 표시 ${shownRestrooms.length}곳 · 위치 확인 중 ${restroomsUnknown.length}곳</p>
-      <p class="small muted">High ${bands.high} · Medium ${bands.medium} · Low ${bands.low}${includePregate() ? '' : ' · 입구 밖은 기본 숨김'}</p>
+      <p><strong>공식 지도 확인 화장실 ${pdfConfirmed}곳</strong> · 데이터 등록 ${restroomsAll.length}곳</p>
+      <p class="small">현재 지도 표시 ${shownRestrooms.length}곳 · 위치 확인 중 ${restroomsUnknown.length}곳</p>
+      <p class="small">일반 게스트용 ${guestDenom}곳 · 호텔·전용 ${hotelOnly}곳 (화장실 수에 중앙구호실·베이비케어 미포함)</p>
+      <p class="small">베이비케어·수유실 ${babyAll.length}곳 · 응급시설 ${aidAll.length}곳 — 화장실 탭 개수에서 제외</p>
+      <p class="small muted">표시 중 베이비케어 ${shownBaby.length}곳 · High ${bands.high} · Medium ${bands.medium} · Low ${bands.low}${includePregate() ? '' : ' · 입구 밖 기본 숨김'}</p>
     </div>`;
 }
 
@@ -443,8 +446,8 @@ function renderSettings() {
 
     <h3 class="sheet-h3">데이터 현황</h3>
     <div class="notice">
-      <p><strong>TDL</strong> 화장실 25곳(유료 19·프리게이트 5·호텔 1, unknown 1 포함). High 9·Medium 7·Low 8·Unknown 1. 베이비케어 1·중앙구호실 1(화장실 수 제외).</p>
-      <p><strong>TDS</strong> 화장실 18곳(유료 15·프리게이트 2·호텔 1). Medium 11·Low 7. 베이비케어 2·중앙구호실 1(화장실 수 제외). 기본은 Medium 이상, Low·입구 밖은 필터로 켭니다.</p>
+      <p><strong>TDL</strong> 공식 PDF 노란 화장실 아이콘 29곳 = 데이터 29곳(유료 20·프리게이트 8·호텔 1). Unknown 좌표 포함. 베이비케어·중앙구호실은 화장실 수에서 제외.</p>
+      <p><strong>TDS</strong> 공식 PDF 노란 화장실 아이콘 20곳 = 데이터 20곳(유료 15·프리게이트 4·호텔 1). 베이비케어·중앙구호실은 화장실 수에서 제외. 기본은 Medium 이상, Low·입구 밖은 필터로 켭니다.</p>
       <p><strong>키 기준</strong> 공식 FAQ(2026-08-01) 기준으로 운영 어트랙션 전수 반영. 레이징 스피리츠는 117~195cm.</p>
       <p><strong>보행 경로</strong> 상세 보행 경로는 검증 중입니다. 현재는 목적지 방향과 직선거리만 안내합니다. 현재 위치가 없거나 파크 밖이면 정문·지도에서 출발점을 고를 수 있습니다.</p>
       <p><strong>운영 종료·장기 휴장</strong> 스페이스 마운틴·버즈 라이트이어(TDL), 머메이드 라군 시어터(TDS)는 기본 목록·지도에서 제외했습니다.</p>
