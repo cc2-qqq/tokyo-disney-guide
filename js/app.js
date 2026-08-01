@@ -5,9 +5,9 @@ import { createMapController } from './map.js';
 import { createLocator, haversineMeters, bearingDegrees, formatDistance } from './geo.js';
 import {
   matchText, attractionMatchesFilters, facilityMatchesFilters,
-  facilityVisible, withDistance, sortByDistance,
+  facilityVisible, facilityBandCounts, withDistance, sortByDistance,
 } from './search.js';
-import { routeToPoi } from './routing.js';
+import { routeToPoi, UNSUPPORTED_MSG } from './routing.js';
 import { TDL_WALK_GRAPH } from './data/routes/tdlWalkGraph.js';
 import { TDS_WALK_GRAPH } from './data/routes/tdsWalkGraph.js';
 import * as ui from './ui.js';
@@ -52,10 +52,10 @@ function cacheEls() {
 // ---- helpers ----
 function parkMeta() { return PARKS[state.park]; }
 
-function includeEstimated() { return store.getSettings().includeEstimated; }
+function includeLowTrust() { return store.getSettings().includeEstimated; }
 
 function visibleFacilities() {
-  return getFacilities(state.park).filter((f) => facilityVisible(f, includeEstimated()));
+  return getFacilities(state.park).filter((f) => facilityVisible(f, includeLowTrust(), state.park));
 }
 
 // POIs shown on the map: all attractions + visible facilities.
@@ -151,8 +151,29 @@ function facilityFilterBar(f) {
     ${chip('babyCare', '베이비케어룸', f.babyCare)}
     ${chip('inGateOnly', '게이트 안쪽', f.inGateOnly)}
     ${chip('highOnly', 'High 신뢰도만', f.highOnly)}
-    ${chip('includeEstimated', '추정 위치 포함', includeEstimated())}
+    ${chip('includeEstimated', '낮은 신뢰도 위치까지 표시', includeLowTrust())}
   </div>`;
+}
+
+function facilityCountSummary() {
+  const all = getFacilities(state.park).filter((f) => f.coordinateStatus !== 'unknown' && f.coordinates);
+  const bands = facilityBandCounts(all);
+  const shown = visibleFacilities().length;
+  const baseCount = state.park === 'TDS'
+    ? bands.high + bands.medium
+    : bands.high;
+  const lowCount = bands.low + (state.park === 'TDL' ? bands.medium : 0);
+  if (state.park === 'TDS') {
+    return `<div class="facility-count notice">
+      <p><strong>화장실 ${shown}곳 표시 중</strong></p>
+      <p class="small">기본(Medium 이상) ${baseCount}곳 · 대략적인 위치 ${bands.low}곳${includeLowTrust() ? ' 포함' : ' (숨김)'}</p>
+      <p class="small muted">낮은 신뢰도 위치까지 표시하면 ${all.length}곳까지 볼 수 있어요.</p>
+    </div>`;
+  }
+  return `<div class="facility-count notice">
+      <p><strong>화장실 ${shown}곳 표시 중</strong></p>
+      <p class="small">확인된 위치(High) ${bands.high}곳 · 대략적인 위치 ${lowCount}곳${includeLowTrust() ? ' 포함' : ' (숨김)'}</p>
+    </div>`;
 }
 
 function getFilters() {
@@ -205,13 +226,13 @@ function renderRestrooms() {
   items = withDistance(items, state.user && state.user.coords);
   if (f.nearest) items = sortByDistance(items);
   els.sheetTitle.textContent = `화장실·시설 (${items.length})`;
-  let body = facilityFilterBar(f);
+  let body = facilityCountSummary() + facilityFilterBar(f);
   if (state.park === 'TDS') {
-    body += `<div class="notice">TDS 화장실·수유·베이비케어·중앙구호실은 공식 PDF 기반 <strong>추정 좌표</strong>입니다(Google POI 미확인). 기본 지도에는 High만 표시되므로, 지금 목록을 보려면 필터에서 <strong>추정 위치 포함</strong>을 켜 주세요.</div>`;
+    body += `<div class="notice"><p>TDS는 공식 지도 기반 <strong>Medium 추정 위치</strong>를 기본으로 표시합니다. 「낮은 신뢰도 위치까지 표시」를 켜면 Low(대략적인 위치)도 함께 보입니다.</p></div>`;
   }
   body += ui.listHtml(items, {
     isFav: (id) => store.isFavorite(id),
-    emptyMsg: '표시할 화장실·시설이 없습니다. 필터를 조정하거나 "추정 위치 포함"을 켜 보세요.',
+    emptyMsg: '표시할 화장실·시설이 없습니다. 필터를 조정하거나 「낮은 신뢰도 위치까지 표시」를 켜 보세요.',
   });
   els.sheetBody.innerHTML = body;
 }
@@ -280,11 +301,12 @@ function renderSettings() {
     <p class="muted small">이 날짜에 <strong>공식 사전 발표 휴장</strong>과 겹치는 어트랙션에 경고를 표시합니다. 실시간 운휴는 공식 앱에서 확인하세요.</p>
 
     <h3 class="sheet-h3">지도 표시</h3>
+    <p class="muted small"><strong>기본 위치 표시</strong> — TDL: High만 · TDS: Medium 이상(공식 지도 기반 추정). 어트랙션은 항상 대략적 위치로 표시됩니다.</p>
     <label class="switch-row">
       <input type="checkbox" id="set-estimated" ${s.includeEstimated ? 'checked' : ''} />
-      <span>지도 자료 기반 추정 위치 포함</span>
+      <span>낮은 신뢰도 위치까지 표시</span>
     </label>
-    <p class="muted small">끄면 Medium·Low 추정 좌표(화장실·시설)는 지도와 목록에서 숨겨지고 High만 표시됩니다. 어트랙션은 항상 대략적 위치로 표시됩니다.</p>
+    <p class="muted small">켜면 Low(대략적인 위치)도 지도·목록에 포함됩니다. TDL의 Medium 추정(있을 경우)도 함께 표시됩니다.</p>
     <button class="btn" id="map-reset" type="button">지도 초기화</button>
     <p class="muted small">선택한 파크 전체가 보기 좋은 범위로 돌아옵니다. 경로·선택도 함께 지워집니다.</p>
 
@@ -308,7 +330,7 @@ function renderSettings() {
     <h3 class="sheet-h3">데이터 현황</h3>
     <div class="notice">
       <p><strong>TDL</strong> 화장실 9곳 지도 기반 추정(대략 5~10m), 추가 검증 4곳, 미확인 1곳(비표시). 중앙구호실 1곳.</p>
-      <p><strong>TDS</strong> 화장실 10곳·베이비케어 2곳·중앙구호실 1곳 — 공식 PDF 기반 추정(Google POI 미확인). 기본 지도는 High만 표시하므로 "추정 위치 포함"을 켜야 보입니다.</p>
+      <p><strong>TDS</strong> 화장실 10곳·베이비케어 2곳·중앙구호실 1곳 — 공식 PDF 기반 추정(Google POI 미확인). 기본은 Medium 이상 표시, Low는 「낮은 신뢰도 위치까지 표시」로 켭니다.</p>
       <p><strong>키 기준</strong> 공식 FAQ(2026-08-01) 기준으로 운영 어트랙션 전수 반영. 레이징 스피리츠는 117~195cm.</p>
       <p><strong>보행 경로</strong> 파크별 부분 보행 그래프(주요 간선). 미연결 구간은 직선 방향 안내로 전환됩니다.</p>
       <p><strong>운영 종료·장기 휴장</strong> 스페이스 마운틴·버즈 라이트이어(TDL), 머메이드 라군 시어터(TDS)는 기본 목록·지도에서 제외했습니다.</p>
@@ -403,6 +425,10 @@ function syncNav() {
 }
 
 function selectPoi(id) {
+  // Switching destination clears previous walk/direction overlays.
+  if ((state.routeId && state.routeId !== id) || (state.directionId && state.directionId !== id)) {
+    clearNavLines();
+  }
   state.selectedId = id;
   const poi = getPoiById(state.park, id);
   if (poi && poi.coordinates) map.focusPoi(poi.coordinates, 17);
@@ -491,19 +517,19 @@ function showRoute(id) {
 
   if (!state.user) {
     toast('현재 위치가 없습니다. 위치를 켜거나, 파크 입구부터 경로를 볼 수 있어요.');
-    // Offer entrance start when no GPS
     state.outsideParkChoice = 'entrance';
   } else if (!isInsidePark(state.user.coords) && state.outsideParkChoice !== 'entrance') {
-    // Prompt via toast + auto offer entrance option in detail by setting choice prompt
+    const dist = haversineMeters(state.user.coords, poi.coordinates);
     state.routeInfo = {
       mode: 'direction',
+      support: 'unsupported',
+      distance: dist,
       reason: '현재 위치가 선택한 파크 밖에 있습니다. 아래에서 "파크 입구부터 경로 보기"를 선택하거나, 다른 파크로 전환해 주세요.',
     };
     state.routeId = id;
     map.clearRoute();
     map.clearDirection();
     renderDetail(id);
-    // Inject choice buttons after render
     injectOutsideParkChoices(id);
     return;
   }
@@ -512,24 +538,31 @@ function showRoute(id) {
   if (!from) { toast('출발 위치를 확인할 수 없습니다'); return; }
 
   const graph = WALK_GRAPHS[state.park];
-  const result = routeToPoi(graph, from, poi);
+  const result = routeToPoi(graph, from, poi, { maxBounds: parkMeta().maxBounds });
   state.directionId = null;
   state.routeId = id;
   if (result.ok) {
     state.routeInfo = {
       mode: 'walk',
       distance: result.distance,
+      support: result.support,
+      supportLabel: result.supportLabel,
       confidence: result.confidence,
       coverageNote: result.coverageNote,
     };
     map.showRoute(result.path);
-    toast(`예상 보행거리 ${formatDistance(result.distance)}`);
+    toast(`${result.supportLabel} · ${formatDistance(result.distance)}`);
   } else {
-    // Fallback to dashed direction
-    state.routeInfo = { mode: 'direction', reason: result.reason };
-    const dirFrom = state.user ? state.user.coords : from;
+    const dirFrom = state.user && isInsidePark(state.user.coords) ? state.user.coords : from;
+    const dist = haversineMeters(dirFrom, poi.coordinates);
+    state.routeInfo = {
+      mode: 'direction',
+      support: 'unsupported',
+      distance: dist,
+      reason: result.reason || UNSUPPORTED_MSG,
+    };
     map.showDirection(dirFrom, poi.coordinates);
-    toast('경로를 만들 수 없어 직선 방향으로 안내합니다');
+    toast('경로 미지원 — 직선 방향만 표시합니다');
   }
   renderDetail(id);
 }
@@ -607,7 +640,7 @@ function toggleAttractionFilter(key) {
 }
 function toggleFacilityFilter(key) {
   if (key === 'includeEstimated') {
-    store.setSettings({ includeEstimated: !includeEstimated() });
+    store.setSettings({ includeEstimated: !includeLowTrust() });
     renderMap();
     return;
   }
@@ -722,7 +755,11 @@ function bindEvents() {
     if (crm) { const c = store.getChildren(); c.splice(Number(crm.dataset.childRemove), 1); store.setChildren(c); renderSettings(); }
   });
   els.sheetBody.addEventListener('change', (e) => {
-    if (e.target.id === 'set-estimated') { store.setSettings({ includeEstimated: e.target.checked }); renderMap(); }
+    if (e.target.id === 'set-estimated') {
+      store.setSettings({ includeEstimated: e.target.checked });
+      renderMap();
+      if (state.tab === 'restrooms') renderRestrooms();
+    }
     if (e.target.id === 'set-visitdate') {
       store.setVisitDate(e.target.value);
       toast(`방문 예정일: ${e.target.value}`);

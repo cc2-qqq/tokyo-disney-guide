@@ -84,6 +84,8 @@ export function createMapController(elId) {
     if (parkMeta.defaultBounds) {
       map.fitBounds(L.latLngBounds(parkMeta.defaultBounds), { animate: false });
     }
+    // Test/debug hook: recover Leaflet instance from the container element.
+    map.getContainer()._tdgMap = map;
     return map;
   }
 
@@ -112,8 +114,10 @@ export function createMapController(elId) {
 
   function makeIcon(poi, selected) {
     const spec = ICONS[poi.type] || ICONS.attraction;
-    const approx = poi.coordinateStatus === 'low_estimated' || poi.coordinateStatus === 'medium_estimated';
-    const html = `<div class="marker ${spec.cls} ${selected ? 'is-selected' : ''} ${approx ? 'is-approx' : ''}" aria-hidden="true"><span class="marker-glyph">${spec.glyph}</span></div>`;
+    let trustCls = '';
+    if (poi.coordinateStatus === 'medium_estimated') trustCls = 'is-medium';
+    else if (poi.coordinateStatus === 'low_estimated') trustCls = 'is-low is-approx';
+    const html = `<div class="marker ${spec.cls} ${selected ? 'is-selected' : ''} ${trustCls}" aria-hidden="true"><span class="marker-glyph">${spec.glyph}</span></div>`;
     return L.divIcon({
       html,
       className: 'marker-wrap',
@@ -190,7 +194,7 @@ export function createMapController(elId) {
     map.flyTo(coords, Math.max(map.getZoom(), 17), { duration: 0.6 });
   }
 
-  // Dashed, thin, secondary "as-the-crow-flies" line. NOT a walking route.
+  // Long-dash crow-flies "직선 방향 안내" — NOT a walking route.
   function showDirection(from, to) {
     clearDirection();
     clearRoute();
@@ -198,8 +202,8 @@ export function createMapController(elId) {
     directionLine = L.polyline([from, to], {
       color: '#7a3ea8',
       weight: 3,
-      opacity: 0.6,
-      dashArray: '8, 10',
+      opacity: 0.55,
+      dashArray: '2, 12',
       lineCap: 'round',
       className: 'dir-line',
     }).addTo(map);
@@ -210,7 +214,7 @@ export function createMapController(elId) {
     if (directionLine) { map.removeLayer(directionLine); directionLine = null; }
   }
 
-  // Solid walk-path polyline along the park graph (distinct from dashed direction).
+  // Solid "예상 보행 경로" along the park graph (visually distinct from dir-line).
   function showRoute(latlngs) {
     clearRoute();
     clearDirection();
@@ -218,9 +222,10 @@ export function createMapController(elId) {
     routeLine = L.polyline(latlngs, {
       color: '#0b6bcb',
       weight: 5,
-      opacity: 0.85,
+      opacity: 0.9,
       lineCap: 'round',
       lineJoin: 'round',
+      dashArray: null,
       className: 'route-line',
     }).addTo(map);
     map.fitBounds(routeLine.getBounds(), { padding: [50, 50], maxZoom: 18 });

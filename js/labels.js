@@ -1,20 +1,23 @@
 // Human-friendly Korean labels. Never show raw technical field names to users.
 
 export const COORD_STATUS_LABEL = {
-  // High좌표도 이번 세션에서 Google POI를 직접 재확인하지 않았고 sourceUrl/checkedAt이 없으므로
-  // "확인"이 아닌 "지도 자료 기반 추정 위치"로 표기한다.
+  // High: TDL Google-POI-derived estimates (not resurveyed GPS).
   high_estimated: '지도 자료 기반 추정 위치',
-  medium_estimated: '추정 위치',
+  // Medium: official park-map + landmark estimate (TDS default visible band).
+  medium_estimated: '공식 지도 기반 추정 위치',
   low_estimated: '대략적인 위치',
   unknown: '위치 미확인',
 };
 
 export const COORD_STATUS_BADGE = {
   high_estimated: { text: '지도 기반 추정', cls: 'badge-high' },
-  medium_estimated: { text: '추정 위치', cls: 'badge-medium' },
-  low_estimated: { text: '대략적 위치', cls: 'badge-low' },
+  medium_estimated: { text: '공식 지도 기반 추정 위치', cls: 'badge-medium' },
+  low_estimated: { text: '대략적인 위치', cls: 'badge-low' },
   unknown: { text: '위치 미확인', cls: 'badge-unknown' },
 };
+
+export const MEDIUM_ESTIMATE_DETAIL_NOTE =
+  '공식 도쿄디즈니리조트 지도와 주변 시설을 기준으로 추정한 위치입니다. 실제 출입구와 다소 차이가 있을 수 있습니다.';
 
 // Shown under any attraction that has an official height limit.
 export const HEIGHT_MEASURE_NOTE = '현장에서는 신발을 신은 상태의 공식 측정과 캐스트 판단을 따릅니다.';

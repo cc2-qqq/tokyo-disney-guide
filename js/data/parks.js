@@ -11,7 +11,8 @@ export const PARKS = {
     center: [35.63235, 139.88065],
     zoom: 16,
     defaultZoom: 16,
-    minZoom: 15,
+    // 390px 실측: minZoom 15에서는 뷰포트가 시내·상대 파크까지 과도하게 노출됨
+    minZoom: 16,
     maxZoom: 19,
     // rough bounding box used only to detect "outside the park"
     bounds: [
@@ -51,7 +52,8 @@ export const PARKS = {
     center: [35.62670, 139.88540],
     zoom: 16,
     defaultZoom: 16,
-    minZoom: 15,
+    // 390px 실측: minZoom 15에서 TDL 중심·넓은 바다 쪽까지 노출되어 16으로 상향
+    minZoom: 16,
     maxZoom: 19,
     bounds: [
       [35.6230, 139.8815],

@@ -73,16 +73,36 @@ export function facilityMatchesFilters(poi, filters) {
   return true;
 }
 
-// Visibility rule for FACILITY points on the map/list:
-//  - unknown: never shown
-//  - low_estimated / medium_estimated: only when includeEstimated is on
-//  - high: always
-export function facilityVisible(poi, includeEstimated) {
-  if (poi.coordinateStatus === 'unknown') return false;
-  if (poi.coordinateStatus === 'low_estimated' || poi.coordinateStatus === 'medium_estimated') {
-    return !!includeEstimated;
+/**
+ * Visibility rule for FACILITY points on the map/list (park-aware defaults).
+ *  - unknown: never
+ *  - high: always
+ *  - medium: TDS default ON; TDL only when includeLow (낮은 신뢰도까지)
+ *  - low: only when includeLow
+ * includeLow = settings "낮은 신뢰도 위치까지 표시"
+ */
+export function facilityVisible(poi, includeLow, parkId) {
+  const st = poi.coordinateStatus;
+  if (st === 'unknown') return false;
+  if (st === 'high_estimated') return true;
+  if (st === 'medium_estimated') {
+    if (parkId === 'TDS') return true;
+    return !!includeLow;
   }
+  if (st === 'low_estimated') return !!includeLow;
   return true;
+}
+
+/** Count facilities by band for summary chips. */
+export function facilityBandCounts(facilities) {
+  const c = { high: 0, medium: 0, low: 0, unknown: 0 };
+  for (const f of facilities) {
+    if (f.coordinateStatus === 'high_estimated') c.high++;
+    else if (f.coordinateStatus === 'medium_estimated') c.medium++;
+    else if (f.coordinateStatus === 'low_estimated') c.low++;
+    else if (f.coordinateStatus === 'unknown') c.unknown++;
+  }
+  return c;
 }
 
 export function withDistance(pois, userCoords) {

@@ -3,6 +3,7 @@ import {
   COORD_STATUS_LABEL, COORD_STATUS_BADGE, ACCURACY_LABEL,
   TYPE_LABEL, confidenceBand, rideEligibility, heightTierLabel,
   heightStatusOf, closureOnDate, formatDateKo, HEIGHT_MEASURE_NOTE,
+  MEDIUM_ESTIMATE_DETAIL_NOTE,
 } from './labels.js';
 import { formatDistance, compass8, bearingDegrees } from './geo.js';
 
@@ -81,9 +82,9 @@ function directionCard(dir) {
   if (!dir) return '';
   const dir8 = compass8(dir.bearing);
   return `
-    <div class="dir-card" role="status">
-      <div class="dir-title">직선거리 안내</div>
-      <div class="dir-main"><strong>${esc(formatDistance(dir.distance))}</strong> · ${esc(dir8)}쪽 방향 (${Math.round(dir.bearing)}\u00B0)</div>
+    <div class="dir-card route-card-dir" role="status">
+      <div class="dir-title">직선 방향 안내</div>
+      <div class="dir-main">직선거리 <strong>${esc(formatDistance(dir.distance))}</strong> · ${esc(dir8)}쪽 방향 (${Math.round(dir.bearing)}\u00B0)</div>
       <p class="dir-note">${esc(STRAIGHT_LINE_NOTE)}</p>
     </div>`;
 }
@@ -109,17 +110,23 @@ function actionRow(poi, { isFav, inVisit } = {}, canDirection) {
 function routeCard(routeInfo) {
   if (!routeInfo) return '';
   if (routeInfo.mode === 'direction') {
-    return `<div class="dir-card route-card" role="status">
-      <div class="dir-title">예상 보행 경로를 만들 수 없어 직선 방향으로 안내합니다</div>
-      <p class="dir-note">${esc(routeInfo.reason || '이 구간은 보행 그래프가 아직 준비되지 않았습니다.')}</p>
+    const dist = routeInfo.distance != null
+      ? `<div class="dir-main">직선거리 <strong>${esc(formatDistance(routeInfo.distance))}</strong></div>`
+      : '';
+    return `<div class="dir-card route-card route-card-dir" role="status">
+      <div class="dir-title">직선 방향 안내</div>
+      <div class="route-support">경로 미지원 — 방향만 표시</div>
+      ${dist}
+      <p class="dir-note">${esc(routeInfo.reason || '이 목적지는 아직 상세 경로를 지원하지 않아 직선 방향만 표시합니다.')}</p>
       <button class="btn" data-act="clear-route" type="button">경로·방향 지우기</button>
     </div>`;
   }
-  return `<div class="dir-card route-card" role="status">
+  const support = routeInfo.supportLabel || (routeInfo.support === 'major' ? '주요 동선 경로 지원' : '부분 경로 지원');
+  return `<div class="dir-card route-card route-card-walk" role="status">
       <div class="dir-title">예상 보행 경로</div>
-      <div class="dir-main"><strong>${esc(formatDistance(routeInfo.distance))}</strong>
-        ${routeInfo.confidence ? ` · 신뢰도 ${esc(routeInfo.confidence)}` : ''}</div>
-      <p class="dir-note">공식 디즈니 경로가 아닌 지도 자료 기반 예상 보행 경로입니다. 현장 통제와 실제 통로를 우선해 주세요.</p>
+      <div class="route-support">${esc(support)}</div>
+      <div class="dir-main">예상 이동거리 <strong>${esc(formatDistance(routeInfo.distance))}</strong></div>
+      <p class="dir-note">지도 자료를 바탕으로 만든 주요 보행로 기준 예상 경로입니다. 세부 통로, 현장 통제 및 공사 상황은 반영되지 않을 수 있습니다.</p>
       <button class="btn" data-act="clear-route" type="button">경로 지우기</button>
     </div>`;
 }
@@ -238,6 +245,7 @@ export function facilityDetail(poi, { isFav, inVisit, distance, userCoords, dire
       </div>
       <div class="detail-grid">${grid}${distLine}</div>
       ${confChip(poi)}
+      ${poi.coordinateStatus === 'medium_estimated' ? `<p class="detail-note">${esc(MEDIUM_ESTIMATE_DETAIL_NOTE)}</p>` : ''}
       ${poi.evidence ? `<div class="detail-grid"><div class="dg-k">위치 확인 근거</div><div class="dg-v">${esc(poi.evidence)}</div></div>` : ''}
       ${routeCard(routeInfo)}
       ${directionCard(direction)}

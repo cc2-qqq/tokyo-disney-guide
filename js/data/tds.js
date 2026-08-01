@@ -16,7 +16,7 @@
 // nearby attraction anchors + satellite context. Therefore:
 //   - coordinateVerified: false, approximate: true
 //   - coordinateStatus: medium_estimated | low_estimated (never high without POI)
-//   - default map hides medium/low until "추정 위치 포함" is on
+//   - TDS default map shows medium+; low only when "낮은 신뢰도 위치까지 표시" is on
 // Unknown candidates are omitted entirely.
 
 export const TDS_RESTROOMS = [
@@ -34,7 +34,7 @@ export const TDS_RESTROOMS = [
     googlePoiName: null,
     evidence: '공식 PDF 메디터레이니언 하버 정문·광장 부근 화장실 표기. Google POI 미확보.',
     estimatedAccuracyMeters: 15, confidenceScore: 52,
-    notes: 'Google POI 미확인. 기본 지도에서는 "추정 위치 포함" 시에만 표시.',
+    notes: 'Google POI 미확인. 공식 지도 기반 Medium 추정 위치(기본 표시).',
   },
   {
     id: 'tds-r02', park: 'TDS', area: 'mediterranean-harbor', type: 'restroom',

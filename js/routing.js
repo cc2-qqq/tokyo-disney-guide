@@ -111,27 +111,52 @@ export function dijkstra(graph, startId, endId) {
   };
 }
 
+const APPROACH_MAX_M = 100; // refuse long arbitrary straight approach legs
+const UNSUPPORTED_MSG = '이 목적지는 아직 상세 경로를 지원하지 않아 직선 방향만 표시합니다.';
+
+function inMaxBounds(coords, maxBounds) {
+  if (!maxBounds || !coords) return true;
+  const [[s, w], [n, e]] = maxBounds;
+  return coords[0] >= s && coords[0] <= n && coords[1] >= w && coords[1] <= e;
+}
+
+/** Connector-only destination (no nearest-node fallback for walk routes). */
+export function connectorDestination(graph, poi) {
+  if (!poi || !graph) return null;
+  const conn = (graph.destinationConnectors || []).find((c) => c.poiId === poi.id);
+  if (!conn) return null;
+  const n = graph.nodes.find((x) => x.id === conn.nodeId);
+  if (!n) return null;
+  return { node: n, distance: conn.distance || 0, viaConnector: true };
+}
+
 /**
  * Full route from user/start coords to a POI.
- * Falls back to null if graph incomplete / snap fails / no path.
+ * Requires a destinationConnector — otherwise ok:false (caller shows dashed direction).
  */
-export function routeToPoi(graph, fromCoords, poi) {
+export function routeToPoi(graph, fromCoords, poi, { maxBounds } = {}) {
   if (!graph || !fromCoords || !poi || !poi.coordinates) {
-    return { ok: false, reason: '출발 위치나 목적지가 없습니다.' };
+    return { ok: false, reason: UNSUPPORTED_MSG, support: 'unsupported' };
   }
-  const start = nearestNode(graph, fromCoords);
-  if (!start) {
-    return { ok: false, reason: '출발 위치 근처의 보행 노드를 찾지 못했습니다. 파크 입구에서 다시 시도해 주세요.' };
+  if (maxBounds && (!inMaxBounds(fromCoords, maxBounds) || !inMaxBounds(poi.coordinates, maxBounds))) {
+    return { ok: false, reason: UNSUPPORTED_MSG, support: 'unsupported' };
   }
-  const dest = destinationNode(graph, poi);
+
+  const dest = connectorDestination(graph, poi);
   if (!dest) {
-    return { ok: false, reason: '목적지 근처의 보행 노드를 찾지 못했습니다.' };
+    return { ok: false, reason: UNSUPPORTED_MSG, support: 'unsupported' };
   }
+
+  const start = nearestNode(graph, fromCoords);
+  if (!start || start.distance > APPROACH_MAX_M) {
+    return { ok: false, reason: UNSUPPORTED_MSG, support: 'unsupported' };
+  }
+
   const result = dijkstra(graph, start.node.id, dest.node.id);
   if (!result) {
-    return { ok: false, reason: '이 구간은 보행 그래프가 연결되지 않아 경로를 계산할 수 없습니다.' };
+    return { ok: false, reason: UNSUPPORTED_MSG, support: 'unsupported' };
   }
-  // Prepend/append actual from/to points for a complete polyline.
+
   const path = [fromCoords, ...result.path];
   if (poi.coordinates) {
     const last = path[path.length - 1];
@@ -139,7 +164,20 @@ export function routeToPoi(graph, fromCoords, poi) {
       path.push(poi.coordinates);
     }
   }
-  const approach = start.distance + (dest.distance || 0);
+  // Guard: no path vertex outside park maxBounds; no oversized approach/exit legs.
+  for (const pt of path) {
+    if (maxBounds && !inMaxBounds(pt, maxBounds)) {
+      return { ok: false, reason: UNSUPPORTED_MSG, support: 'unsupported' };
+    }
+  }
+  const exitDist = haversineMeters(dest.node.coordinates, poi.coordinates);
+  if (exitDist > APPROACH_MAX_M) {
+    return { ok: false, reason: UNSUPPORTED_MSG, support: 'unsupported' };
+  }
+
+  const approach = start.distance + (dest.distance || 0) + exitDist;
+  // Major = short snap to corridor; partial = longer but still within approach limit.
+  const support = (start.distance <= 45 && exitDist <= 40) ? 'major' : 'partial';
   return {
     ok: true,
     mode: 'walk',
@@ -148,8 +186,12 @@ export function routeToPoi(graph, fromCoords, poi) {
     distance: result.distance + approach,
     confidence: graph.confidence || '부분',
     coverageNote: graph.coverageNote || '',
+    support,
+    supportLabel: support === 'major' ? '주요 동선 경로 지원' : '부분 경로 지원',
   };
 }
+
+export { UNSUPPORTED_MSG, APPROACH_MAX_M };
 
 /** Basic integrity helpers used by validate.mjs */
 export function graphStats(graph) {
