@@ -1,6 +1,8 @@
 import { PARKS, PARK_IDS, LANDMARK_ATTRACTIONS, isLandmark } from './parks.js';
 import { TDL_ATTRACTIONS, TDL_RESTROOMS, TDL_EMERGENCY, TDL_BABYCARE } from './tdl.js';
 import { TDS_ATTRACTIONS, TDS_RESTROOMS, TDS_EMERGENCY, TDS_BABYCARE } from './tds.js';
+import { ENTRANCES } from './entrances.js';
+import { PARK_BOUNDARIES } from './boundaries.js';
 
 const DATA = {
   TDL: {
@@ -57,5 +59,26 @@ export function getFacilities(parkId) {
 }
 
 export function getPoiById(parkId, id) {
-  return getPois(parkId).find((p) => p.id === id) || null;
+  return getPois(parkId).find((p) => p.id === id)
+    || getEntranceById(parkId, id)
+    || null;
 }
+
+export function getEntrances(parkId) {
+  const list = ENTRANCES[parkId] || [];
+  return list.map((e) => ({ ...e, areaNameKo: '입구·프리게이트' }));
+}
+
+export function getEntranceById(parkId, id) {
+  return getEntrances(parkId).find((e) => e.id === id) || null;
+}
+
+export function getMainEntrance(parkId) {
+  return getEntrances(parkId).find((e) => e.entranceKind === 'main_entrance') || null;
+}
+
+export function getParkBoundaries(parkId) {
+  return PARK_BOUNDARIES[parkId] || null;
+}
+
+export { ENTRANCES, PARK_BOUNDARIES };

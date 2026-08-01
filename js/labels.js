@@ -36,6 +36,7 @@ export const TYPE_LABEL = {
   firstAid: '중앙구호실',
   emergencyFacility: '응급시설',
   babyCare: '베이비케어룸·수유실',
+  entrance: '입구',
 };
 
 export const TYPE_ICON = {

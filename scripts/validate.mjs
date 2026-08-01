@@ -1,5 +1,5 @@
 // Data validation for TDL/TDS POIs + walk graphs + park bounds. Run: npm run validate
-import { PARK_IDS, PARKS, getPois } from '../js/data/index.js';
+import { PARK_IDS, PARKS, getPois, getEntrances, getParkBoundaries } from '../js/data/index.js';
 import { TDL_WALK_GRAPH } from '../js/data/routes/tdlWalkGraph.js';
 import { TDS_WALK_GRAPH } from '../js/data/routes/tdsWalkGraph.js';
 import {
@@ -212,7 +212,46 @@ function validateGraph(label, graph, parkId) {
 validateGraph('TDL', TDL_WALK_GRAPH, 'TDL');
 validateGraph('TDS', TDS_WALK_GRAPH, 'TDS');
 
+// Entrances + visual boundaries (guidance data; not cadastral).
+const ENTRANCE_KINDS = new Set(['main_entrance', 'pre_gate', 'station_side']);
+let entranceTotal = 0;
+for (const parkId of PARK_IDS) {
+  const ents = getEntrances(parkId);
+  if (!ents.some((e) => e.entranceKind === 'main_entrance')) {
+    err(`[${parkId}] 메인 입구(main_entrance) 없음`);
+  }
+  for (const e of ents) {
+    entranceTotal++;
+    const tag = `[entrance:${parkId}] ${e.id}`;
+    for (const f of ['id', 'park', 'nameKo', 'coordinates', 'entranceKind', 'insidePaidArea', 'source', 'checkedAt']) {
+      if (e[f] == null || e[f] === '') err(`${tag}: 필수 필드 누락 '${f}'`);
+    }
+    if (!ENTRANCE_KINDS.has(e.entranceKind)) err(`${tag}: entranceKind 오류`);
+    if (!Array.isArray(e.coordinates) || e.coordinates.length !== 2) err(`${tag}: 좌표 형식 오류`);
+    else if (PARKS[parkId].maxBounds && !inBounds(e.coordinates, PARKS[parkId].maxBounds)) {
+      warn(`${tag}: maxBounds 밖 (안내용일 수 있음)`);
+    }
+    if (seenIds.has(e.id)) err(`${tag}: ID 중복`);
+    else seenIds.set(e.id, parkId);
+  }
+  const b = getParkBoundaries(parkId);
+  if (!b) { err(`[${parkId}] 경계 데이터 없음`); continue; }
+  for (const key of ['parkOuterBoundary', 'paidAreaBoundary', 'entranceAreaBoundary']) {
+    const ring = b[key] && b[key].ring;
+    if (!Array.isArray(ring) || ring.length < 3) err(`[${parkId}] ${key} 다각형 부족`);
+    else {
+      for (const c of ring) {
+        if (!Array.isArray(c) || c.length !== 2 || typeof c[0] !== 'number' || typeof c[1] !== 'number') {
+          err(`[${parkId}] ${key} 좌표 형식 오류`);
+          break;
+        }
+      }
+    }
+  }
+}
+
 console.log(`검사한 POI 수: ${total}`);
+console.log(`검사한 입구 수: ${entranceTotal}`);
 console.log(`경고: ${warnings.length}, 오류: ${errors.length}`);
 if (warnings.length) {
   console.log('\n--- 경고 ---');
