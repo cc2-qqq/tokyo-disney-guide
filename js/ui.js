@@ -91,7 +91,18 @@ function directionCard(dir) {
     </div>`;
 }
 
-function actionRow(poi, { isFav, inVisit } = {}, canDirection, canWalkRoute = false) {
+function originChoicesHtml(poiId, { outsidePark = false } = {}) {
+  return `
+    <div class="origin-choices" role="group" aria-label="출발점 선택">
+      <p class="detail-note"><strong>출발점 선택</strong></p>
+      <button class="btn btn-primary" data-act="origin-user" data-poi="${esc(poiId)}" type="button">현재 위치 사용</button>
+      <button class="btn" data-act="origin-entrance" data-poi="${esc(poiId)}" type="button">${outsidePark ? '파크 정문에서 방향 보기' : '파크 정문에서 시작'}</button>
+      <button class="btn" data-act="origin-map" data-poi="${esc(poiId)}" type="button">지도에서 출발점 선택</button>
+    </div>`;
+}
+
+function actionRow(poi, { isFav, inVisit } = {}, _canDirectionIgnored, canWalkRoute = false) {
+  // Direction stays enabled even without a GPS fix — app requests location / offers origin choice on tap.
   const walkBtn = canWalkRoute
     ? `<button class="btn btn-primary" data-act="route" data-poi="${esc(poi.id)}" type="button">
         <span aria-hidden="true">\u{1F6B6}</span> 예상 경로 보기
@@ -104,7 +115,7 @@ function actionRow(poi, { isFav, inVisit } = {}, canDirection, canWalkRoute = fa
         <span aria-hidden="true">${isFav ? '\u2605' : '\u2606'}</span> 즐겨찾기
       </button>
       ${walkBtn}
-      <button class="btn ${dirPrimary}" data-act="direction" data-poi="${esc(poi.id)}" type="button" ${canDirection ? '' : 'disabled'}>
+      <button class="btn ${dirPrimary}" data-act="direction" data-poi="${esc(poi.id)}" type="button">
         <span aria-hidden="true">\u{1F9ED}</span> 방향 보기
       </button>
       <button class="btn ${inVisit ? 'btn-active' : ''}" data-act="visit" data-poi="${esc(poi.id)}" type="button" aria-pressed="${!!inVisit}">
@@ -114,17 +125,29 @@ function actionRow(poi, { isFav, inVisit } = {}, canDirection, canWalkRoute = fa
     ${canWalkRoute ? '' : `<p class="detail-note">${esc(ROUTE_VERIFYING_NOTE)}</p>`}`;
 }
 
-function routeCard(routeInfo) {
+function routeCard(routeInfo, poiId) {
   if (!routeInfo) return '';
+  if (routeInfo.mode === 'need-origin' || routeInfo.mode === 'outside-park') {
+    return `<div class="dir-card route-card route-card-dir" role="status">
+      <div class="dir-title">${routeInfo.mode === 'outside-park' ? '파크 밖 위치' : '출발점 필요'}</div>
+      <p class="dir-note">${esc(routeInfo.reason || '')}</p>
+      ${originChoicesHtml(poiId || routeInfo.poiId, { outsidePark: routeInfo.mode === 'outside-park' })}
+    </div>`;
+  }
   if (routeInfo.mode === 'direction') {
     const dist = routeInfo.distance != null
-      ? `<div class="dir-main">직선거리 <strong>${esc(formatDistance(routeInfo.distance))}</strong></div>`
+      ? `<div class="dir-main">직선거리 <strong>${esc(formatDistance(routeInfo.distance))}</strong>${routeInfo.bearingLabel ? ` · ${esc(routeInfo.bearingLabel)}` : ''}</div>`
       : '';
+    const origin = routeInfo.originLabel
+      ? `<div class="route-support">출발: ${esc(routeInfo.originLabel)}</div>`
+      : `<div class="route-support">방향만 표시</div>`;
     return `<div class="dir-card route-card route-card-dir" role="status">
       <div class="dir-title">직선 방향 안내</div>
-      <div class="route-support">방향만 표시</div>
+      ${origin}
       ${dist}
       <p class="dir-note">${esc(routeInfo.reason || ROUTE_VERIFYING_NOTE)}</p>
+      <p class="dir-note">${esc(STRAIGHT_LINE_NOTE)}</p>
+      ${originChoicesHtml(poiId || routeInfo.poiId)}
       <button class="btn" data-act="clear-route" type="button">경로·방향 지우기</button>
     </div>`;
   }
@@ -215,9 +238,9 @@ export function attractionDetail(poi, { children, isFav, inVisit, distance, user
 
       <div class="detail-grid">${distLine}</div>
       ${confChip(poi)}
-      ${routeCard(routeInfo)}
+      ${routeCard(routeInfo, poi.id)}
       ${directionCard(direction)}
-      ${actionRow(poi, { isFav, inVisit }, !!userCoords, !!canWalkRoute)}
+      ${actionRow(poi, { isFav, inVisit }, true, !!canWalkRoute)}
       ${poi.notes ? `<p class="detail-note">${esc(poi.notes)}</p>` : ''}
       <p class="detail-note detail-warn">\u2139\uFE0F ${esc(OFFICIAL_APP_NOTE)}</p>
     </div>`;
@@ -253,9 +276,9 @@ export function facilityDetail(poi, { isFav, inVisit, distance, userCoords, dire
       ${confChip(poi)}
       ${poi.coordinateStatus === 'medium_estimated' ? `<p class="detail-note">${esc(MEDIUM_ESTIMATE_DETAIL_NOTE)}</p>` : ''}
       ${poi.evidence ? `<div class="detail-grid"><div class="dg-k">위치 확인 근거</div><div class="dg-v">${esc(poi.evidence)}</div></div>` : ''}
-      ${routeCard(routeInfo)}
+      ${routeCard(routeInfo, poi.id)}
       ${directionCard(direction)}
-      ${actionRow(poi, { isFav, inVisit }, !!userCoords, !!canWalkRoute)}
+      ${actionRow(poi, { isFav, inVisit }, true, !!canWalkRoute)}
       ${poi.notes ? `<p class="detail-note">${esc(poi.notes)}</p>` : ''}
     </div>`;
 }

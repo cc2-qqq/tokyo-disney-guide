@@ -37,19 +37,48 @@ export function isSupported() {
   return 'geolocation' in navigator;
 }
 
+export function classifyGeoError(e) {
+  // e.code: 1 PERMISSION_DENIED, 2 POSITION_UNAVAILABLE, 3 TIMEOUT
+  switch (e && e.code) {
+    case 1: return { code: 'denied', message: '위치 권한이 거부되었습니다. 브라우저 설정에서 허용해 주세요.' };
+    case 2: return { code: 'unavailable', message: 'GPS 신호를 받을 수 없습니다. 실내나 지하일 수 있어요.' };
+    case 3: return { code: 'timeout', message: '위치 확인이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.' };
+    default: return { code: 'unknown', message: '위치를 가져오지 못했습니다.' };
+  }
+}
+
+/** One-shot position request (does not start a watch). */
+export function requestPositionOnce(options = {}) {
+  return new Promise((resolve, reject) => {
+    if (!isSupported()) {
+      reject({ code: 'unsupported', message: '이 브라우저는 위치 기능을 지원하지 않습니다.' });
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        resolve({
+          coords: [pos.coords.latitude, pos.coords.longitude],
+          accuracy: pos.coords.accuracy,
+        });
+      },
+      (e) => reject(classifyGeoError(e)),
+      {
+        enableHighAccuracy: true,
+        maximumAge: 5000,
+        timeout: 15000,
+        ...options,
+      },
+    );
+  });
+}
+
 // Returns a controller with start/stop for continuous watch.
 // callbacks: onPosition({coords:[lat,lng], accuracy}), onError(codeInfo), onStatus(str)
 export function createLocator({ onPosition, onError, onStatus } = {}) {
   let watchId = null;
 
   function classifyError(e) {
-    // e.code: 1 PERMISSION_DENIED, 2 POSITION_UNAVAILABLE, 3 TIMEOUT
-    switch (e && e.code) {
-      case 1: return { code: 'denied', message: '위치 권한이 거부되었습니다. 브라우저 설정에서 허용해 주세요.' };
-      case 2: return { code: 'unavailable', message: 'GPS 신호를 받을 수 없습니다. 실내나 지하일 수 있어요.' };
-      case 3: return { code: 'timeout', message: '위치 확인이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.' };
-      default: return { code: 'unknown', message: '위치를 가져오지 못했습니다.' };
-    }
+    return classifyGeoError(e);
   }
 
   function start() {
