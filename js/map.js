@@ -44,7 +44,7 @@ export function createMapController(elId) {
   // ---- App overlay labels (attractions / selected facilities).
   // Vector basemap keeps restaurants/shops/roads; attractions+toilets stay app-owned.
   const labelState = {
-    category: 'map', // map | attractions | restrooms | favorites
+    category: 'map', // map | attractions | restrooms | favorites | none
     parkMeta: null,
     areas: [],
     attractions: [],
@@ -54,6 +54,7 @@ export function createMapController(elId) {
     favIds: new Set(),
     mapLabelMode: LABEL_MODES.KO_FIRST,
   };
+  let meetupMarker = null;
 
   function applyBasemapStyle(parkId, theme, { fallback = false, labelMode } = {}) {
     currentParkId = parkId || currentParkId;
@@ -203,12 +204,15 @@ export function createMapController(elId) {
     }
   }
 
-  function makeIcon(poi, selected) {
+  function makeIcon(poi, selected, rideBadge) {
     const spec = ICONS[poi.type] || ICONS.attraction;
     let trustCls = '';
     if (poi.coordinateStatus === 'medium_estimated') trustCls = 'is-medium';
     else if (poi.coordinateStatus === 'low_estimated') trustCls = 'is-low is-approx';
-    const html = `<div class="marker ${spec.cls} ${selected ? 'is-selected' : ''} ${trustCls}" aria-hidden="true"><span class="marker-glyph">${spec.glyph}</span></div>`;
+    const badge = rideBadge
+      ? `<span class="m-ride-badge" aria-hidden="true">${escapeHtml(rideBadge)}</span>`
+      : '';
+    const html = `<div class="marker ${spec.cls} ${selected ? 'is-selected' : ''} ${trustCls}" aria-hidden="true"><span class="marker-glyph">${spec.glyph}</span>${badge}</div>`;
     return L.divIcon({
       html,
       className: 'marker-wrap',
@@ -217,13 +221,14 @@ export function createMapController(elId) {
     });
   }
 
-  function renderMarkers(pois, { onSelect, selectedId } = {}) {
+  function renderMarkers(pois, { onSelect, selectedId, rideBadges } = {}) {
     markerGroup.clearLayers();
     markers = new Map();
+    const badges = rideBadges || {};
     for (const poi of pois) {
       if (!poi.coordinates) continue;
       const m = L.marker(poi.coordinates, {
-        icon: makeIcon(poi, poi.id === selectedId),
+        icon: makeIcon(poi, poi.id === selectedId, badges[poi.id]),
         keyboard: true,
         title: poi.nameKo || poi.name,
         alt: `${(ICONS[poi.type] || {}).label || ''} ${poi.nameKo || poi.name}`,
@@ -231,6 +236,28 @@ export function createMapController(elId) {
       m.on('click', () => onSelect && onSelect(poi.id));
       m.addTo(markerGroup);
       markers.set(poi.id, m);
+    }
+  }
+
+  function setMeetupMarker(coords, label) {
+    clearMeetupMarker();
+    if (!coords || !map) return;
+    meetupMarker = L.marker(coords, {
+      icon: L.divIcon({
+        html: `<div class="meetup-marker" title="${escapeHtml(label || '가족 집결지')}" aria-hidden="true"><span class="meetup-ico">집</span></div>`,
+        className: 'meetup-wrap',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+      }),
+      zIndexOffset: 800,
+      title: label || '가족 집결지',
+    }).addTo(map);
+  }
+
+  function clearMeetupMarker() {
+    if (meetupMarker) {
+      map.removeLayer(meetupMarker);
+      meetupMarker = null;
     }
   }
 
@@ -521,7 +548,7 @@ export function createMapController(elId) {
       }
     }
     const cat = s.category || 'map';
-    const hideAttrLabels = cat === 'restrooms';
+    const hideAttrLabels = cat === 'restrooms' || cat === 'none';
     const hideNonFavAttr = cat === 'favorites';
     const attractionsOnly = cat === 'attractions';
 
@@ -553,17 +580,17 @@ export function createMapController(elId) {
         }
       }
     }
-    // Selected POI (attraction or facility) always shown, highest priority —
-    // but not when the active category hides that kind.
+    // Selected POI always shown (including layerMode none — search/detail exception).
     if (s.selectedId) {
       const sel = s.attractions.find((a) => a.id === s.selectedId)
         || s.facilities.find((f) => f.id === s.selectedId);
       if (sel && sel.coordinates) {
         const isAttr = sel.type === 'attraction';
-        const allowed = attractionsOnly ? isAttr
-          : cat === 'restrooms' ? (sel.type === 'restroom' || sel.type === 'babyCare')
-            : cat === 'favorites' ? s.favIds.has(sel.id)
-              : true;
+        const allowed = cat === 'none' || cat === 'map' ? true
+          : attractionsOnly ? isAttr
+            : cat === 'restrooms' ? (sel.type === 'restroom' || sel.type === 'babyCare')
+              : cat === 'favorites' ? s.favIds.has(sel.id)
+                : true;
         if (allowed) {
           out.push({
             key: (isAttr ? 'at:' : 'fac:') + sel.id,
@@ -621,6 +648,7 @@ export function createMapController(elId) {
     init, setPark, setBasemapTheme, setBasemapLabelMode, resetView, renderMarkers, highlight, focusPoi,
     setUserLocation, centerOnUser, showDirection, clearDirection,
     setStartMarker, clearStartMarker, beginPickStart, cancelPickStart,
+    setMeetupMarker, clearMeetupMarker,
     showRoute, clearRoute, showRouteDebug, clearRouteDebug, invalidate,
     setLabelSources, setLabelOptions, renderLabels,
     getMap: () => map,

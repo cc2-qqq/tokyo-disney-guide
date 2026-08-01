@@ -8,6 +8,8 @@ const KEY = {
   done: 'tdg:done',
   settings: 'tdg:settings',
   visitDate: 'tdg:visitDate',
+  visitPriorities: 'tdg:visitPriorities',
+  meetup: 'tdg:meetup', // { TDL: {...}, TDS: {...} }
 };
 
 const DEFAULT_VISIT_DATE = '2026-08-10';
@@ -40,7 +42,10 @@ const DEFAULT_SETTINGS = {
   theme: 'auto', // 'auto' | 'light' | 'dark'
   // Vector basemap label language: Korean-first (keeps JP as data / high-zoom aux).
   mapLabelMode: 'ko', // 'ko' | 'ko_ja' | 'ja'
+  showFamilyRideBadge: true, // 목록·마커 가족 탑승 배지
 };
+
+const PRIORITIES = new Set(['must', 'maybe', 'hold']);
 
 export const store = {
   getPark() {
@@ -58,6 +63,7 @@ export const store = {
     write(KEY.favorites, list);
     return list.includes(id);
   },
+  setFavorites(list) { write(KEY.favorites, Array.isArray(list) ? list : []); },
 
   getChildren() {
     const c = read(KEY.children, null);
@@ -75,13 +81,36 @@ export const store = {
   toggleVisit(id) {
     const list = this.getVisitList();
     const i = list.indexOf(id);
-    if (i >= 0) list.splice(i, 1); else list.push(id);
+    if (i >= 0) {
+      list.splice(i, 1);
+      const pr = this.getVisitPriorities();
+      delete pr[id];
+      this.setVisitPriorities(pr);
+    } else {
+      list.push(id);
+      const pr = this.getVisitPriorities();
+      if (!pr[id]) pr[id] = 'maybe';
+      this.setVisitPriorities(pr);
+    }
     write(KEY.visitList, list);
     return list.includes(id);
   },
 
+  getVisitPriorities() { return read(KEY.visitPriorities, {}) || {}; },
+  setVisitPriorities(map) { write(KEY.visitPriorities, map || {}); },
+  getVisitPriority(id) {
+    const p = this.getVisitPriorities()[id];
+    return PRIORITIES.has(p) ? p : 'maybe';
+  },
+  setVisitPriority(id, priority) {
+    const pr = this.getVisitPriorities();
+    pr[id] = PRIORITIES.has(priority) ? priority : 'maybe';
+    this.setVisitPriorities(pr);
+  },
+
   getDone() { return read(KEY.done, []); },
   isDone(id) { return this.getDone().includes(id); },
+  setDone(list) { write(KEY.done, Array.isArray(list) ? list : []); },
   toggleDone(id) {
     const list = this.getDone();
     const i = list.indexOf(id);
@@ -98,4 +127,19 @@ export const store = {
     return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : DEFAULT_VISIT_DATE;
   },
   setVisitDate(d) { if (/^\d{4}-\d{2}-\d{2}$/.test(d)) write(KEY.visitDate, d); },
+
+  /** Per-park meetup: { park, coordinates, facilityId, label, note, savedAt } */
+  getMeetup(park) {
+    const all = read(KEY.meetup, {}) || {};
+    const p = park === 'TDS' ? 'TDS' : 'TDL';
+    return all[p] || null;
+  },
+  setMeetup(park, meetup) {
+    const all = read(KEY.meetup, {}) || {};
+    const p = park === 'TDS' ? 'TDS' : 'TDL';
+    if (!meetup) delete all[p];
+    else all[p] = { ...meetup, park: p };
+    write(KEY.meetup, all);
+  },
+  clearMeetup(park) { this.setMeetup(park, null); },
 };

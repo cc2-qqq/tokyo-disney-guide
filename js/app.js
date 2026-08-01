@@ -16,6 +16,13 @@ import {
 } from './routing.js';
 import { TDL_WALK_GRAPH, TDL_LEGACY_WALK_GRAPH } from './data/routes/tdlWalkGraph.js';
 import { TDS_WALK_GRAPH } from './data/routes/tdsWalkGraph.js';
+import {
+  familyRideSummary, applyFamilyQuick, attractionPassesFamilyExtras, buildNearbySections,
+} from './family.js';
+import {
+  buildShareData, encodeShareToParam, decodeShareParam, buildShareUrl,
+  exportShareJson, parseShareJson,
+} from './share.js';
 import * as ui from './ui.js';
 
 const WALK_GRAPHS = { TDL: TDL_WALK_GRAPH, TDS: TDS_WALK_GRAPH };
@@ -26,8 +33,11 @@ const ROUTE_DEBUG = (() => {
 
 const state = {
   park: store.getPark(),
-  tab: 'map',           // map | attractions | restrooms | favorites | settings | search | filter | detail
+  // Panel only (sheet content). Map marker category uses layerMode.
+  tab: 'map', // map | attractions | restrooms | favorites | settings | detail | search | filter | familyNearby
   prevTab: 'attractions',
+  // Map app-marker category (independent of open panel).
+  layerMode: 'all', // all | attractions | restrooms | favorites | none
   query: '',
   selectedId: null,
   directionId: null,    // POI id currently showing direction line
@@ -41,6 +51,9 @@ const state = {
   manualStart: null,      // [lat,lng] when startOrigin === 'map'
   pendingDirectionId: null, // resume direction after GPS grant
   pickingStart: false,
+  pickingMeetup: false,
+  visitSort: 'manual', // manual | must | undone | bothOk
+  pendingShare: null, // imported share awaiting user choice
 };
 
 const map = createMapController('map');
@@ -53,6 +66,7 @@ function cacheEls() {
   els.parkToggle = $('#park-toggle');
   els.search = $('#search-input');
   els.locBtn = $('#loc-btn');
+  els.nearbyBtn = $('#nearby-btn');
   els.filterBtn = $('#filter-btn');
   els.sheet = $('#sheet');
   els.sheetTitle = $('#sheet-title');
@@ -62,6 +76,7 @@ function cacheEls() {
   els.offline = $('#offline-banner');
   els.toast = $('#toast');
   els.locStatus = $('#loc-status');
+  els.mapFab = $('#map-fab');
 }
 
 // ---- helpers ----
@@ -81,31 +96,34 @@ function visibleFacilities({ restroomTabOnly = false } = {}) {
   });
 }
 
-/** Active map category from bottom nav (detail/search inherit prevTab). */
+/** Active map layer from layerMode (panel tab must not drive markers). */
 function mapCategory() {
-  if (state.tab === 'map' || state.tab === 'settings') return 'map';
-  if (state.tab === 'attractions' || state.tab === 'restrooms' || state.tab === 'favorites') return state.tab;
-  if (state.tab === 'detail' || state.tab === 'search' || state.tab === 'filter') {
-    if (state.prevTab === 'attractions' || state.prevTab === 'restrooms' || state.prevTab === 'favorites') {
-      return state.prevTab;
-    }
-  }
-  return 'map';
+  if (state.layerMode === 'all') return 'map';
+  return state.layerMode; // attractions | restrooms | favorites | none
 }
 
 function poiMatchesCategory(poi, category = mapCategory()) {
   if (!poi) return false;
-  if (category === 'map') return true;
+  if (category === 'map' || category === 'none') return true;
   if (category === 'attractions') return poi.type === 'attraction';
   if (category === 'restrooms') return isRestroomTabFacility(poi);
   if (category === 'favorites') return store.isFavorite(poi.id);
   return true;
 }
 
-// POIs shown on the map: filtered by bottom-nav category.
+// POIs shown on the map: filtered by layerMode.
 function mapPois() {
-  const cat = mapCategory();
-  if (cat === 'attractions') return getAttractions(state.park);
+  const cat = state.layerMode;
+  if (cat === 'none') {
+    const keep = new Set();
+    if (state.selectedId) keep.add(state.selectedId);
+    if (state.directionId) keep.add(state.directionId);
+    if (state.routeId) keep.add(state.routeId);
+    return getPois(state.park).filter((p) => keep.has(p.id) && p.coordinates);
+  }
+  if (cat === 'attractions') {
+    return getAttractions(state.park).filter((p) => attractionPassesFamilyExtras(p, getFilters().attraction, store.getVisitDate()));
+  }
   if (cat === 'restrooms') {
     const ff = { ...getFilters().facility };
     if (ff.inGateOnly == null) ff.inGateOnly = true;
@@ -116,20 +134,38 @@ function mapPois() {
     return getPois(state.park).filter((p) => fav.has(p.id) && p.coordinates
       && (p.type === 'attraction' || facilityVisible(p, includeLowTrust(), state.park, facilityVisibilityOpts())));
   }
-  // map / settings: all app-managed markers
+  // all: every app-managed marker
   return [...getAttractions(state.park), ...visibleFacilities()];
 }
 
 function clearSelectionIfWrongCategory(category = mapCategory()) {
   if (!state.selectedId) return;
+  if (category === 'none') return; // keep selected marker while layers are off
   const poi = getPoiById(state.park, state.selectedId);
   if (poiMatchesCategory(poi, category)) return;
   state.selectedId = null;
   map.highlight(null);
   if (state.tab === 'detail') {
-    // Drop detail for POI that no longer belongs to the active category.
     state.tab = category === 'map' ? 'map' : category;
   }
+}
+
+function rideBadgeMap(pois) {
+  if (!store.getSettings().showFamilyRideBadge) return {};
+  const children = store.getChildren();
+  const out = {};
+  for (const p of pois) {
+    if (p.type !== 'attraction') continue;
+    const s = familyRideSummary(p, children);
+    if (s.short) out[p.id] = s.short;
+  }
+  return out;
+}
+
+function syncMeetupMarker() {
+  const m = store.getMeetup(state.park);
+  if (m && m.coordinates) map.setMeetupMarker(m.coordinates, m.label || '가족 집결지');
+  else map.clearMeetupMarker();
 }
 
 function distanceTo(poi) {
@@ -186,7 +222,12 @@ function toast(msg, ms = 2600) {
 // ---- rendering ----
 function renderMap() {
   const pois = withDistance(mapPois(), state.user && state.user.coords);
-  map.renderMarkers(pois, { onSelect: selectPoi, selectedId: state.selectedId });
+  map.renderMarkers(pois, {
+    onSelect: selectPoi,
+    selectedId: state.selectedId,
+    rideBadges: rideBadgeMap(pois),
+  });
+  syncMeetupMarker();
 }
 
 // Korean label layer: sources (per park) + options (per selection/fav/setting).
@@ -213,6 +254,28 @@ function chip(id, label, active) {
   return `<button class="chip ${active ? 'chip-on' : ''}" data-filter="${id}" type="button" aria-pressed="${!!active}">${ui.esc(label)}</button>`;
 }
 
+function familyQuickBar(f) {
+  const children = store.getChildren();
+  const c0 = children[0];
+  const c1 = children[1];
+  const bothLabel = children.length >= 2 ? '두 아이 모두 탑승 가능' : '모두 탑승 가능';
+  const indoorOn = !!(f.indoor && f.height === 'all-children');
+  return `<div class="family-quick" role="group" aria-label="가족 빠른 보기">
+    <div class="family-quick-title">가족 빠른 보기</div>
+    <div class="chips">
+      <button class="chip ${f.height === 'all-children' && !f.indoor ? 'chip-on' : ''}" data-family-quick="all-children" type="button">${ui.esc(bothLabel)}</button>
+      ${c0 ? `<button class="chip ${f.height === 'child:0' ? 'chip-on' : ''}" data-family-quick="child:0" type="button">${ui.esc(c0.name)} 탑승 가능</button>` : ''}
+      ${c1 ? `<button class="chip ${f.height === 'child:1' ? 'chip-on' : ''}" data-family-quick="child:1" type="button">${ui.esc(c1.name)} 탑승 가능</button>` : ''}
+      <button class="chip ${f.height === 'none' ? 'chip-on' : ''}" data-family-quick="none" type="button">키 제한 없음</button>
+      <button class="chip ${indoorOn ? 'chip-on' : ''}" data-family-quick="indoor" type="button">실내 위주</button>
+      <button class="chip ${f.kid ? 'chip-on' : ''}" data-family-quick="kid" type="button">어린이 추천</button>
+      <button class="chip ${f.excludeClosed ? 'chip-on' : ''}" data-family-quick="excludeClosed" type="button">방문일 휴장 제외</button>
+      <button class="chip" data-family-quick="reset" type="button">필터 초기화</button>
+    </div>
+    ${indoorOn ? '<p class="muted small indoor-note">실내로 분류된 어트랙션입니다. 실제 대기 장소와 온도는 현장에서 확인해 주세요.</p>' : ''}
+  </div>`;
+}
+
 function attractionFilterBar(f) {
   const children = store.getChildren();
   const childChips = children.map((c, i) => chip(`h-child:${i}`, `${ui.esc(c.name)} 탑승 가능`, f.height === `child:${i}`)).join('');
@@ -232,6 +295,7 @@ function attractionFilterBar(f) {
     ${chip('rainy', '비 오는 날', f.rainy)}
     ${chip('favorites', '즐겨찾기', f.favorites)}
     ${chip('nearest', '가까운 순', f.nearest)}
+    ${chip('excludeClosed', '방문일 휴장 제외', f.excludeClosed)}
   </div>`;
 }
 
@@ -300,16 +364,27 @@ function filterCtx() {
   return { isFavorite: (id) => store.isFavorite(id), children: store.getChildren() };
 }
 
+function listOpts() {
+  return {
+    isFav: (id) => store.isFavorite(id),
+    isDone: (id) => store.isDone(id),
+    children: store.getChildren(),
+    showFamilyBadge: !!store.getSettings().showFamilyRideBadge,
+  };
+}
+
 function renderAttractions() {
   const f = getFilters().attraction;
-  let items = getAttractions(state.park).filter((p) => matchText(p, state.query) && attractionMatchesFilters(p, f, filterCtx()));
+  const vd = store.getVisitDate();
+  let items = getAttractions(state.park).filter((p) => matchText(p, state.query)
+    && attractionMatchesFilters(p, f, filterCtx())
+    && attractionPassesFamilyExtras(p, f, vd));
   items = withDistance(items, state.user && state.user.coords);
   if (f.nearest) items = sortByDistance(items);
   items = annotateClosure(items);
   els.sheetTitle.textContent = `어트랙션 (${items.length})`;
-  els.sheetBody.innerHTML = attractionFilterBar(f) + ui.listHtml(items, {
-    isFav: (id) => store.isFavorite(id),
-    isDone: (id) => store.isDone(id),
+  els.sheetBody.innerHTML = familyQuickBar(f) + attractionFilterBar(f) + ui.listHtml(items, {
+    ...listOpts(),
     emptyMsg: '조건에 맞는 어트랙션이 없습니다.',
   });
 }
@@ -332,17 +407,59 @@ function renderRestrooms() {
   let body = facilityCountSummary() + facilityFilterBar(f);
   body += `<div class="notice"><p>중앙구호실·AED는 화장실이 아니어서 이 목록에 넣지 않습니다. 지도 탭에서 확인할 수 있어요.</p></div>`;
   body += ui.listHtml(items, {
-    isFav: (id) => store.isFavorite(id),
+    ...listOpts(),
     emptyMsg: '표시할 화장실·베이비케어가 없습니다. 필터를 조정해 보세요.',
   });
   if (unknown.length) {
     body += `<h3 class="sheet-h3">위치 확인 중 (${unknown.length})</h3>`;
     body += ui.listHtml(unknown.map((p) => ({ ...p, nameNote: (p.nameNote ? `${p.nameNote} · ` : '') + '좌표 확인 중' })), {
-      isFav: (id) => store.isFavorite(id),
+      ...listOpts(),
       emptyMsg: '',
     });
   }
   els.sheetBody.innerHTML = body;
+}
+
+const PRIORITY_LABEL = { must: '꼭 가기', maybe: '가능하면', hold: '보류' };
+const PRIORITY_ORDER = { must: 0, maybe: 1, hold: 2 };
+
+function sortedVisitItems(visitItems) {
+  const children = store.getChildren();
+  const mode = state.visitSort;
+  const indexed = visitItems.map((p, i) => ({ p, i }));
+  if (mode === 'manual') return indexed.map((x) => x.p);
+  indexed.sort((a, b) => {
+    if (mode === 'must') {
+      const pa = PRIORITY_ORDER[store.getVisitPriority(a.p.id)] ?? 1;
+      const pb = PRIORITY_ORDER[store.getVisitPriority(b.p.id)] ?? 1;
+      if (pa !== pb) return pa - pb;
+    } else if (mode === 'undone') {
+      const da = store.isDone(a.p.id) ? 1 : 0;
+      const db = store.isDone(b.p.id) ? 1 : 0;
+      if (da !== db) return da - db;
+    } else if (mode === 'bothOk') {
+      const sa = a.p.type === 'attraction' ? (familyRideSummary(a.p, children).okCount ?? -1) : -1;
+      const sb = b.p.type === 'attraction' ? (familyRideSummary(b.p, children).okCount ?? -1) : -1;
+      if (sa !== sb) return sb - sa;
+    }
+    return a.i - b.i;
+  });
+  return indexed.map((x) => x.p);
+}
+
+function sharePanelHtml() {
+  return `<div class="share-panel">
+    <h3 class="sheet-h3">가족에게 공유</h3>
+    <p class="muted small">현재 계획의 사본을 공유합니다. 이후 변경사항은 자동으로 동기화되지 않습니다. 현재 위치(GPS)는 포함되지 않습니다.</p>
+    <div class="detail-actions">
+      <button class="btn btn-primary" data-act="share-link" type="button">공유 링크 만들기</button>
+      <button class="btn" data-act="share-qr" type="button">QR 코드 표시</button>
+      <button class="btn" data-act="share-export" type="button">JSON 내보내기</button>
+      <button class="btn" data-act="share-import-file" type="button">JSON 가져오기</button>
+    </div>
+    <input id="share-file" type="file" accept="application/json,.json" hidden />
+    <div id="share-result" class="share-result" hidden></div>
+  </div>`;
 }
 
 function renderFavorites() {
@@ -352,38 +469,72 @@ function renderFavorites() {
   favs = annotateClosure(withDistance(favs, state.user && state.user.coords));
   const vd = store.getVisitDate();
   const visitIds = store.getVisitList();
-  const visitItems = visitIds.map((id) => getPoiById(state.park, id)).filter(Boolean);
+  const visitItemsRaw = visitIds.map((id) => getPoiById(state.park, id)).filter(Boolean);
+  const visitItems = sortedVisitItems(visitItemsRaw);
+  const sort = state.visitSort;
 
   els.sheetTitle.textContent = '즐겨찾기 · 방문 목록';
   let body = `<h3 class="sheet-h3">즐겨찾기</h3>`;
   body += ui.listHtml(favs, {
+    ...listOpts(),
     isFav: () => true,
-    isDone: (id) => store.isDone(id),
     emptyMsg: '아직 즐겨찾기한 항목이 없습니다. 상세 화면에서 별표를 눌러 추가하세요.',
   });
 
-  body += `<h3 class="sheet-h3">내 방문 목록 <span class="muted">(내가 정한 순서)</span></h3>`;
+  body += `<h3 class="sheet-h3">내 방문 목록</h3>`;
+  body += `<div class="chips" role="group" aria-label="방문 목록 정렬">
+    <button class="chip ${sort === 'manual' ? 'chip-on' : ''}" data-visit-sort="manual" type="button">내가 정한 순서</button>
+    <button class="chip ${sort === 'must' ? 'chip-on' : ''}" data-visit-sort="must" type="button">꼭 가기 먼저</button>
+    <button class="chip ${sort === 'undone' ? 'chip-on' : ''}" data-visit-sort="undone" type="button">미완료 먼저</button>
+    <button class="chip ${sort === 'bothOk' ? 'chip-on' : ''}" data-visit-sort="bothOk" type="button">두 아이 모두 가능한 곳 먼저</button>
+  </div>`;
+  body += `<p class="muted small">정렬 보기는 화면 표시만 바꿉니다. 저장 순서는 위·아래 버튼으로 유지됩니다.</p>`;
   if (!visitItems.length) {
     body += ui.emptyState('방문할 곳을 상세 화면에서 "내 방문 목록"으로 추가해 보세요.');
   } else {
-    body += `<ol class="visit-list">${visitItems.map((p, i) => {
+    body += `<ol class="visit-list">${visitItems.map((p) => {
       const done = store.isDone(p.id);
+      const pr = store.getVisitPriority(p.id);
       const closedLong = p.operatingStatus === 'closed_longterm';
       const closedVisit = p.type === 'attraction' && closureOnDate(p, vd);
       const cbadge = closedLong ? '<span class="badge badge-closed">운영 종료</span>' : (closedVisitBadge(closedVisit));
+      const idx = visitIds.indexOf(p.id);
       return `<li class="visit-row ${done ? 'is-done' : ''}">
-        <button class="vbtn" data-poi="${ui.esc(p.id)}" type="button">${ui.esc(p.nameKo || p.name)} ${cbadge}</button>
+        <button class="vbtn" data-poi="${ui.esc(p.id)}" type="button">
+          <span class="prio-badge prio-${ui.esc(pr)}">[${ui.esc(PRIORITY_LABEL[pr])}]</span>
+          ${ui.esc(p.nameKo || p.name)} ${cbadge}
+        </button>
         <span class="visit-ctrls">
-          <button class="iconbtn" data-visit-up="${ui.esc(p.id)}" type="button" aria-label="위로" ${i === 0 ? 'disabled' : ''}>\u2191</button>
-          <button class="iconbtn" data-visit-down="${ui.esc(p.id)}" type="button" aria-label="아래로" ${i === visitItems.length - 1 ? 'disabled' : ''}>\u2193</button>
+          <select class="prio-select" data-visit-prio="${ui.esc(p.id)}" aria-label="우선순위">
+            <option value="must" ${pr === 'must' ? 'selected' : ''}>꼭 가기</option>
+            <option value="maybe" ${pr === 'maybe' ? 'selected' : ''}>가능하면</option>
+            <option value="hold" ${pr === 'hold' ? 'selected' : ''}>보류</option>
+          </select>
+          <button class="iconbtn" data-visit-up="${ui.esc(p.id)}" type="button" aria-label="위로" ${idx === 0 ? 'disabled' : ''}>\u2191</button>
+          <button class="iconbtn" data-visit-down="${ui.esc(p.id)}" type="button" aria-label="아래로" ${idx === visitIds.length - 1 ? 'disabled' : ''}>\u2193</button>
           <button class="iconbtn ${done ? 'on' : ''}" data-visit-done="${ui.esc(p.id)}" type="button" aria-label="완료 표시" aria-pressed="${done}">\u2713</button>
           <button class="iconbtn" data-visit-remove="${ui.esc(p.id)}" type="button" aria-label="목록에서 제거">\u2715</button>
         </span>
       </li>`;
     }).join('')}</ol>
-    <p class="muted small">검증된 실제 보행경로가 없어 "자동 최적 경로"는 제공하지 않습니다. 순서는 직접 정한 순서입니다.</p>`;
+    <p class="muted small">검증된 실제 보행경로가 없어 자동 동선은 제공하지 않습니다. 순서는 직접 정한 순서입니다.</p>`;
   }
+  body += sharePanelHtml();
+  if (state.pendingShare) body += pendingShareHtml(state.pendingShare);
   els.sheetBody.innerHTML = body;
+}
+
+function pendingShareHtml(share) {
+  return `<div class="notice share-import-prompt" role="dialog" aria-label="공유 계획 가져오기">
+    <p><strong>공유된 방문 계획을 받았습니다.</strong></p>
+    <p class="small">파크 ${ui.esc(share.park)} · 방문일 ${ui.esc(share.visitDate || '—')} · 방문 ${share.visitList.length}곳 · 즐겨찾기 ${share.favorites.length}곳</p>
+    <p class="muted small">현재 계획의 사본입니다. 이후 변경사항은 자동으로 동기화되지 않습니다.</p>
+    <div class="detail-actions">
+      <button class="btn btn-primary" data-act="share-merge" type="button">현재 계획에 추가</button>
+      <button class="btn" data-act="share-replace" type="button">현재 계획을 교체</button>
+      <button class="btn" data-act="share-cancel" type="button">취소</button>
+    </div>
+  </div>`;
 }
 
 function renderSettings() {
@@ -408,8 +559,16 @@ function renderSettings() {
     </div>
     <p class="muted small">이 날짜에 <strong>공식 사전 발표 휴장</strong>과 겹치는 어트랙션에 경고를 표시합니다. 실시간 운휴는 공식 앱에서 확인하세요.</p>
 
+    <h3 class="sheet-h3">가족 집결지 (${state.park})</h3>
+    ${meetupSettingsHtml()}
+
     <h3 class="sheet-h3">지도 표시</h3>
     <p class="muted small"><strong>기본 위치 표시</strong> — TDL: High만 · TDS: Medium 이상(공식 지도 기반 추정). 어트랙션은 항상 대략적 위치로 표시됩니다.</p>
+    <label class="switch-row">
+      <input type="checkbox" id="set-family-badge" ${s.showFamilyRideBadge !== false ? 'checked' : ''} />
+      <span>가족 탑승 배지 표시</span>
+    </label>
+    <p class="muted small">어트랙션 목록·지도 마커에 2/2 · 1/2 · 0/2 배지를 표시합니다.</p>
     <label class="switch-row">
       <input type="checkbox" id="set-estimated" ${s.includeEstimated ? 'checked' : ''} />
       <span>낮은 신뢰도 위치까지 표시</span>
@@ -455,6 +614,33 @@ function renderSettings() {
     </div>`;
 }
 
+function meetupSettingsHtml() {
+  const m = store.getMeetup(state.park);
+  if (!m) {
+    return `<p class="muted small">가족이 흩어질 때 만날 곳을 저장해 두세요. TDL·TDS는 각각 따로 저장됩니다.</p>
+      <div class="detail-actions">
+        <button class="btn" data-act="meetup-pick-map" type="button">지도에서 집결지 선택</button>
+        <button class="btn" data-act="meetup-from-selected" type="button">현재 선택 시설을 집결지로</button>
+        <button class="btn" data-act="meetup-entrance" type="button">파크 정문을 집결지로</button>
+      </div>`;
+  }
+  return `<div class="notice">
+      <p><strong>${ui.esc(m.label || '가족 집결지')}</strong></p>
+      ${m.note ? `<p class="small">${ui.esc(m.note)}</p>` : ''}
+      <p class="muted small">저장: ${ui.esc(m.savedAt ? new Date(m.savedAt).toLocaleString('ko-KR') : '—')}</p>
+      <label class="child-row" style="margin-top:8px">
+        <input class="inp" id="meetup-note" value="${ui.esc(m.note || '')}" placeholder="메모 (예: 길이 잃으면 여기서 만나기)" aria-label="집결지 메모" />
+      </label>
+      <div class="detail-actions">
+        <button class="btn btn-primary" data-act="meetup-view" type="button">집결지 보기</button>
+        <button class="btn" data-act="meetup-direction" type="button">방향 보기</button>
+        <button class="btn" data-act="meetup-note-save" type="button">메모 저장</button>
+        <button class="btn" data-act="meetup-pick-map" type="button">집결지 변경</button>
+        <button class="btn" data-act="meetup-clear" type="button">집결지 삭제</button>
+      </div>
+    </div>`;
+}
+
 function renderDetail(id) {
   const poi = getPoiById(state.park, id);
   if (!poi) { openTab(state.prevTab); return; }
@@ -478,12 +664,85 @@ function renderDetail(id) {
       : directionFor(withArea),
     routeInfo,
     canWalkRoute,
+    showFamilyBadge: !!store.getSettings().showFamilyRideBadge,
   };
+  let html;
   if (withArea.type === 'attraction') {
-    els.sheetBody.innerHTML = ui.attractionDetail(withArea, { children: store.getChildren(), visitDate: store.getVisitDate(), ...common });
+    html = ui.attractionDetail(withArea, { children: store.getChildren(), visitDate: store.getVisitDate(), ...common });
   } else {
-    els.sheetBody.innerHTML = ui.facilityDetail(withArea, common);
+    html = ui.facilityDetail(withArea, common);
   }
+  html += `<div class="detail-actions">
+    <button class="btn" data-act="meetup-set-poi" data-poi="${ui.esc(id)}" type="button">이 시설을 가족 집결지로</button>
+  </div>`;
+  els.sheetBody.innerHTML = html;
+}
+
+function nearbyReferencePoint() {
+  if (state.user && state.user.coords && isInsidePark(state.user.coords)) {
+    return { from: state.user.coords, mode: 'user', label: '현재 위치' };
+  }
+  if (state.user && state.user.coords && !isInsidePark(state.user.coords)) {
+    return { from: null, mode: 'outside', label: '파크 밖' };
+  }
+  return { from: null, mode: 'noloc', label: null };
+}
+
+function renderFamilyNearby() {
+  state._nearbyFromEntrance = false;
+  els.sheetTitle.textContent = '지금 근처';
+  const ref = nearbyReferencePoint();
+  let body = `<div class="emergency-row" role="group" aria-label="긴급 빠른 버튼">
+    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="restroom" type="button">가까운 화장실</button>
+    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="firstAid" type="button">중앙구호실</button>
+    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="baby" type="button">베이비케어·수유실</button>
+    <button class="btn emerg-btn" data-act="meetup-view" type="button">가족 집결지</button>
+  </div>`;
+
+  if (ref.mode === 'noloc') {
+    body += `<div class="notice"><p>주변 시설을 보려면 현재 위치가 필요합니다.</p>
+      <button class="btn btn-primary" data-act="request-location" type="button">위치 권한 요청</button></div>`;
+    els.sheetBody.innerHTML = body;
+    return;
+  }
+  if (ref.mode === 'outside') {
+    body += `<div class="notice">
+      <p>현재 위치가 파크 밖입니다. 긴 직선거리는 계산하지 않습니다.</p>
+      <button class="btn btn-primary" data-act="nearby-from-entrance" type="button">파크 정문 기준으로 보기</button>
+    </div>`;
+    els.sheetBody.innerHTML = body;
+    return;
+  }
+
+  const from = ref.from;
+  const sections = buildNearbySections({
+    from,
+    attractions: getAttractions(state.park),
+    facilities: visibleFacilities(),
+    children: store.getChildren(),
+    visitDate: store.getVisitDate(),
+    limit: 3,
+  });
+  body += `<p class="muted small">현재 위치 기준 직선거리 순입니다. 실제 이동거리는 다를 수 있습니다.</p>`;
+  for (const sec of sections) {
+    body += `<h3 class="sheet-h3">${ui.esc(sec.title)}</h3>`;
+    if (!sec.items.length) {
+      body += ui.emptyState('근처에 표시할 항목이 없습니다.');
+      continue;
+    }
+    body += `<ul class="poi-list nearby-list">${sec.items.map((p) => `
+      <li class="nearby-item">
+        <div class="nearby-main">
+          <strong class="nearby-name">${ui.esc(p.nameKo || p.name)}</strong>
+          <span class="li-meta">${ui.esc(p.areaNameKo || '')} · 직선 ${ui.esc(p._distLabel)} · 신뢰도 ${ui.esc(p._trust)}${p._closedOnVisit ? ' · 방문일 휴장' : ''}</span>
+        </div>
+        <div class="nearby-actions">
+          <button class="btn" data-poi="${ui.esc(p.id)}" type="button">상세 보기</button>
+          <button class="btn" data-act="direction" data-poi="${ui.esc(p.id)}" type="button">방향 보기</button>
+        </div>
+      </li>`).join('')}</ul>`;
+  }
+  els.sheetBody.innerHTML = body;
 }
 
 function renderSearch() {
@@ -508,7 +767,7 @@ function renderSearch() {
   items = annotateClosure(items);
   els.sheetTitle.textContent = q ? `"${q}" 검색 결과 (${items.length})` : '검색';
   els.sheetBody.innerHTML = (q ? '' : `<p class="muted small">한국어·일본어·영어 이름, 구역, 시설 종류로 검색할 수 있어요.</p>`)
-    + ui.listHtml(items, { isFav: (id) => store.isFavorite(id), emptyMsg: '검색 결과가 없습니다.' });
+    + ui.listHtml(items, { ...listOpts(), emptyMsg: '검색 결과가 없습니다.' });
 }
 
 function renderFilter() {
@@ -526,6 +785,7 @@ const RENDERERS = {
   settings: renderSettings,
   search: renderSearch,
   filter: renderFilter,
+  familyNearby: renderFamilyNearby,
 };
 
 function renderSheet() {
@@ -535,40 +795,95 @@ function renderSheet() {
 }
 
 // ---- navigation / sheet ----
-function openTab(tab) {
-  if (['attractions', 'restrooms', 'favorites', 'settings'].includes(tab)) state.prevTab = tab;
+function openSheetPanel(tab) {
+  if (['attractions', 'restrooms', 'favorites', 'settings', 'familyNearby'].includes(tab)) state.prevTab = tab;
   state.tab = tab;
-  clearSelectionIfWrongCategory(mapCategory());
+  els.sheet.classList.add('open');
+  els.sheet.setAttribute('aria-hidden', 'false');
+  renderSheet();
+  syncNav();
+}
+
+function openTab(tab) {
   if (tab === 'map') {
+    state.layerMode = 'all';
     closeSheet();
-  } else {
-    els.sheet.classList.add('open');
-    els.sheet.setAttribute('aria-hidden', 'false');
-    renderSheet();
+    return;
   }
+  if (['attractions', 'restrooms', 'favorites'].includes(tab)) {
+    state.layerMode = tab;
+  }
+  clearSelectionIfWrongCategory(mapCategory());
+  openSheetPanel(tab);
   renderMap();
   syncLabelSources();
   syncLabelOptions();
   syncNav();
 }
 
+/** Close panel only — does not reset layerMode (X button / backdrop). */
 function closeSheet() {
   els.sheet.classList.remove('open');
   els.sheet.setAttribute('aria-hidden', 'true');
   state.tab = 'map';
-  clearSelectionIfWrongCategory('map');
+  // After closing detail, re-apply layer rules (none → hide selected app marker).
+  if (state.layerMode === 'none') {
+    state.selectedId = null;
+    map.highlight(null);
+  } else {
+    clearSelectionIfWrongCategory(mapCategory());
+  }
   renderMap();
   syncLabelOptions();
   syncNav();
 }
 
+/** Bottom category toggle: same tab while its list is open → layer none; else open list. */
+function toggleLayerTab(tab) {
+  if (state.query) { state.query = ''; els.search.value = ''; }
+  if (tab === 'map') {
+    state.layerMode = 'all';
+    closeSheet();
+    renderMap();
+    syncLabelOptions();
+    syncNav();
+    return;
+  }
+  if (tab === 'settings') {
+    if (state.tab === 'settings') { closeSheet(); return; }
+    openSheetPanel('settings');
+    return;
+  }
+  // Second click on the open category list → hide that layer + close panel.
+  if (state.layerMode === tab && state.tab === tab) {
+    state.layerMode = 'none';
+    closeSheet();
+    renderMap();
+    syncLabelOptions();
+    syncNav();
+    return;
+  }
+  state.layerMode = tab;
+  clearSelectionIfWrongCategory(mapCategory());
+  openSheetPanel(tab);
+  renderMap();
+  syncLabelSources();
+  syncLabelOptions();
+  syncNav();
+}
+
 function syncNav() {
-  const active = ['attractions', 'restrooms', 'favorites', 'settings'].includes(state.tab) ? state.tab : (state.tab === 'map' ? 'map' : state.prevTab);
   els.nav.querySelectorAll('button').forEach((b) => {
-    const on = b.dataset.tab === active || (state.tab === 'map' && b.dataset.tab === 'map');
+    const tab = b.dataset.tab;
+    let on = false;
+    if (tab === 'map') on = state.layerMode === 'all';
+    else if (tab === 'attractions' || tab === 'restrooms' || tab === 'favorites') on = state.layerMode === tab;
+    else if (tab === 'settings') on = state.tab === 'settings';
     b.classList.toggle('nav-on', on);
-    b.setAttribute('aria-current', on ? 'page' : 'false');
+    if (on) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
   });
+  if (els.nearbyBtn) els.nearbyBtn.classList.toggle('on', state.tab === 'familyNearby');
 }
 
 function selectPoi(id) {
@@ -617,13 +932,18 @@ function setPark(p) {
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   map.setPark(parkMeta());
-  // Keep current category/tab; re-render that park's data.
+  // Keep layerMode; re-render same layer for the new park. Clear selection/direction.
   clearSelectionIfWrongCategory(mapCategory());
   renderMap();
   syncLabelSources();
   syncLabelOptions();
-  if (state.tab === 'detail') openTab(state.prevTab || 'map');
-  else if (state.tab !== 'map') renderSheet();
+  if (state.tab === 'detail') {
+    if (state.layerMode === 'attractions' || state.layerMode === 'restrooms' || state.layerMode === 'favorites') {
+      openSheetPanel(state.layerMode);
+    } else {
+      closeSheet();
+    }
+  } else if (state.tab !== 'map') renderSheet();
   toast(`${PARKS[p].nameKo}로 전환했습니다`);
 }
 
@@ -1013,6 +1333,332 @@ function toggleAttractionFilter(key) {
   }
   setAttractionFilters(f);
 }
+
+function applyFamilyQuickAction(action) {
+  const next = applyFamilyQuick(getFilters().attraction, action, store.getChildren());
+  if (action === 'excludeClosed') {
+    const f = getFilters().attraction;
+    f.excludeClosed = !f.excludeClosed;
+    setAttractionFilters(f);
+  } else if (action === 'kid') {
+    const f = getFilters().attraction;
+    f.kid = !f.kid;
+    setAttractionFilters(f);
+  } else {
+    setAttractionFilters(next);
+  }
+  renderSheet();
+  renderMap();
+}
+
+function saveMeetup(partial) {
+  const prev = store.getMeetup(state.park) || {};
+  const meetup = {
+    park: state.park,
+    coordinates: partial.coordinates,
+    facilityId: partial.facilityId || null,
+    label: partial.label || '가족 집결지',
+    note: partial.note != null ? partial.note : (prev.note || ''),
+    savedAt: new Date().toISOString(),
+  };
+  store.setMeetup(state.park, meetup);
+  syncMeetupMarker();
+  toast('가족 집결지를 저장했습니다');
+}
+
+function setMeetupFromPoi(id) {
+  const poi = getPoiById(state.park, id);
+  if (!poi || !poi.coordinates) { toast('좌표가 없어 집결지로 지정할 수 없습니다'); return; }
+  saveMeetup({
+    coordinates: poi.coordinates,
+    facilityId: poi.id,
+    label: poi.nameKo || poi.name || '가족 집결지',
+  });
+  if (state.tab === 'settings') renderSettings();
+  else if (state.tab === 'detail') renderDetail(id);
+}
+
+function setMeetupFromSelected() {
+  if (!state.selectedId) { toast('먼저 시설을 선택해 주세요'); return; }
+  setMeetupFromPoi(state.selectedId);
+}
+
+function setMeetupEntrance() {
+  const c = parkMeta().entranceCoordinates;
+  if (!c) return;
+  saveMeetup({ coordinates: c, facilityId: null, label: `${parkMeta().nameKo} 정문` });
+  if (state.tab === 'settings') renderSettings();
+}
+
+function beginMeetupPick() {
+  state.pickingMeetup = true;
+  toast('지도에서 집결지를 탭하세요', 3500);
+  closeSheet();
+  map.beginPickStart((coords) => {
+    state.pickingMeetup = false;
+    if (!isInsidePark(coords)) {
+      toast('파크 안에서 집결지를 선택해 주세요', 3500);
+      return;
+    }
+    saveMeetup({ coordinates: coords, facilityId: null, label: '지도에서 선택한 집결지' });
+    openSheetPanel('settings');
+  });
+}
+
+function viewMeetup() {
+  const m = store.getMeetup(state.park);
+  if (!m || !m.coordinates) { toast('저장된 가족 집결지가 없습니다'); openSheetPanel('settings'); return; }
+  map.focusPoi(m.coordinates, 17);
+  syncMeetupMarker();
+  toast(m.label || '가족 집결지');
+}
+
+function directionToMeetup() {
+  const m = store.getMeetup(state.park);
+  if (!m || !m.coordinates) { toast('저장된 가족 집결지가 없습니다'); return; }
+  // Synthetic direction to meetup coords without a POI id — use entrance-style overlay.
+  const from = directionStartCoords() || (state.user && state.user.coords);
+  if (!from) {
+    toast('방향 안내를 위해 현재 위치 또는 출발점이 필요합니다');
+    toggleLocation();
+    return;
+  }
+  const bearing = bearingDegrees(from, m.coordinates);
+  state.directionId = null;
+  state.routeId = null;
+  state.routeInfo = {
+    mode: 'direction',
+    support: 'direction',
+    distance: haversineMeters(from, m.coordinates),
+    bearingLabel: `${compass8(bearing)}쪽 방향 (${Math.round(bearing)}\u00B0)`,
+    originLabel: directionOriginLabel() || '출발점',
+    reason: VERIFYING_MSG,
+  };
+  map.showDirection(from, m.coordinates);
+  map.focusPoi(m.coordinates, 17);
+  toast(`집결지 직선거리 ${formatDistance(state.routeInfo.distance)}`);
+}
+
+function nearestFacility(kind, from) {
+  let pool = visibleFacilities();
+  if (kind === 'restroom') pool = pool.filter((f) => f.type === 'restroom');
+  else if (kind === 'accessible') pool = pool.filter((f) => f.type === 'restroom' && f.accessibleRestroom);
+  else if (kind === 'baby') pool = pool.filter((f) => f.type === 'babyCare' || f.babyCare || f.nursingRoom);
+  else if (kind === 'firstAid') pool = pool.filter((f) => f.type === 'firstAid' || f.type === 'emergencyFacility');
+  if (!from) return null;
+  let best = null; let bestD = Infinity;
+  for (const p of pool) {
+    if (!p.coordinates) continue;
+    const d = haversineMeters(from, p.coordinates);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+
+function jumpNearest(kind) {
+  if (kind === 'meetup') { viewMeetup(); return; }
+  let from = null;
+  if (state._nearbyFromEntrance) {
+    from = parkMeta().entranceCoordinates;
+  } else {
+    const ref = nearbyReferencePoint();
+    from = ref.from;
+    if (!from) {
+      if (ref.mode === 'outside') {
+        toast('파크 밖입니다. 정문 기준으로 보려면 「지금 근처」에서 선택하세요');
+        openSheetPanel('familyNearby');
+        return;
+      }
+      toast('주변 시설을 보려면 현재 위치가 필요합니다.');
+      openSheetPanel('familyNearby');
+      return;
+    }
+  }
+  const poi = nearestFacility(kind, from);
+  if (!poi) { toast('근처에 해당 시설이 없습니다'); return; }
+  selectPoi(poi.id);
+}
+
+function showNearbyFromEntrance() {
+  const from = parkMeta().entranceCoordinates;
+  if (!from) return;
+  const sections = buildNearbySections({
+    from,
+    attractions: getAttractions(state.park),
+    facilities: visibleFacilities(),
+    children: store.getChildren(),
+    visitDate: store.getVisitDate(),
+    limit: 3,
+  });
+  els.sheetTitle.textContent = '지금 근처 (정문 기준)';
+  let body = `<p class="muted small">파크 정문 기준 직선거리 순입니다. 실제 이동거리는 다를 수 있습니다.</p>`;
+  body += `<div class="emergency-row" role="group" aria-label="긴급 빠른 버튼">
+    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="restroom" type="button">가까운 화장실</button>
+    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="firstAid" type="button">중앙구호실</button>
+    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="baby" type="button">베이비케어·수유실</button>
+    <button class="btn emerg-btn" data-act="meetup-view" type="button">가족 집결지</button>
+  </div>`;
+  for (const sec of sections) {
+    body += `<h3 class="sheet-h3">${ui.esc(sec.title)}</h3>`;
+    if (!sec.items.length) { body += ui.emptyState('표시할 항목이 없습니다.'); continue; }
+    body += `<ul class="poi-list nearby-list">${sec.items.map((p) => `
+      <li class="nearby-item">
+        <div class="nearby-main">
+          <strong class="nearby-name">${ui.esc(p.nameKo || p.name)}</strong>
+          <span class="li-meta">${ui.esc(p.areaNameKo || '')} · 직선 ${ui.esc(p._distLabel)} · 신뢰도 ${ui.esc(p._trust)}${p._closedOnVisit ? ' · 방문일 휴장' : ''}</span>
+        </div>
+        <div class="nearby-actions">
+          <button class="btn" data-poi="${ui.esc(p.id)}" type="button">상세 보기</button>
+          <button class="btn" data-act="direction" data-poi="${ui.esc(p.id)}" type="button">방향 보기</button>
+        </div>
+      </li>`).join('')}</ul>`;
+  }
+  // Temporarily override nearest jump to use entrance
+  state.user = state.user; // keep
+  els.sheetBody.innerHTML = body;
+  // Store entrance as temporary reference for jump buttons in this view
+  state._nearbyFromEntrance = true;
+}
+
+function currentShareSnapshot() {
+  return buildShareData({
+    park: state.park,
+    visitDate: store.getVisitDate(),
+    children: store.getChildren(),
+    favorites: store.getFavorites(),
+    visitList: store.getVisitList(),
+    done: store.getDone(),
+    priorities: store.getVisitPriorities(),
+    meetup: store.getMeetup(state.park),
+  });
+}
+
+async function createShareLink(withQr) {
+  try {
+    const data = currentShareSnapshot();
+    const param = await encodeShareToParam(data);
+    const url = buildShareUrl(window.location.href.split('#')[0], param);
+    const box = els.sheetBody.querySelector('#share-result');
+    if (box) {
+      box.hidden = false;
+      box.innerHTML = `<p class="muted small">현재 계획의 사본을 공유합니다. 이후 변경사항은 자동으로 동기화되지 않습니다.</p>
+        <input class="inp share-url" readonly value="${ui.esc(url)}" aria-label="공유 링크" />
+        <button class="btn" data-act="share-copy" type="button">링크 복사</button>
+        <div id="share-qr-box" class="share-qr-box" ${withQr ? '' : 'hidden'}></div>`;
+      const copyBtn = box.querySelector('[data-act="share-copy"]');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(url);
+            toast('링크를 복사했습니다');
+          } catch {
+            box.querySelector('.share-url').select();
+            toast('링크를 길게 눌러 복사해 주세요');
+          }
+        });
+      }
+      if (withQr) renderQr(url, box.querySelector('#share-qr-box'));
+    }
+    if (navigator.share) {
+      try { await navigator.share({ title: '도쿄 디즈니 방문 계획', url, text: '가족 방문 계획 사본' }); } catch { /* cancelled */ }
+    }
+  } catch (err) {
+    toast(err.message || '공유 링크를 만들지 못했습니다');
+  }
+}
+
+function renderQr(text, el) {
+  if (!el) return;
+  el.hidden = false;
+  const makeQr = typeof window !== 'undefined' ? window.qrcode : null;
+  if (typeof makeQr !== 'function') {
+    el.innerHTML = '<p class="muted small">QR 라이브러리를 불러오지 못했습니다. 공유 링크를 사용해 주세요.</p>';
+    return;
+  }
+  try {
+    const qr = makeQr(0, 'M');
+    qr.addData(text);
+    qr.make();
+    el.innerHTML = qr.createImgTag(4, 8);
+    const img = el.querySelector('img');
+    if (img) {
+      img.alt = '방문 계획 공유 QR';
+      img.style.maxWidth = '100%';
+      img.style.height = 'auto';
+      img.style.imageRendering = 'pixelated';
+    }
+  } catch {
+    el.innerHTML = '<p class="muted small">QR을 만들지 못했습니다. 링크가 너무 길 수 있습니다.</p>';
+  }
+}
+
+function exportShareFile() {
+  const data = currentShareSnapshot();
+  const blob = new Blob([exportShareJson(data)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `tokyo-disney-plan-${state.park}-${store.getVisitDate()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('JSON 파일을 내보냈습니다');
+}
+
+function applyPendingShare(mode) {
+  const share = state.pendingShare;
+  if (!share) return;
+  if (share.park && share.park !== state.park) setPark(share.park);
+  if (share.visitDate) store.setVisitDate(share.visitDate);
+  if (share.children && share.children.length) store.setChildren(share.children);
+
+  if (mode === 'replace') {
+    store.setFavorites(share.favorites || []);
+    store.setVisitList(share.visitList || []);
+    store.setDone(share.done || []);
+    store.setVisitPriorities(share.priorities || {});
+    if (share.meetup) store.setMeetup(state.park, { ...share.meetup, park: state.park });
+    else store.clearMeetup(state.park);
+  } else {
+    const fav = new Set(store.getFavorites());
+    (share.favorites || []).forEach((id) => fav.add(id));
+    store.setFavorites([...fav]);
+    const visit = store.getVisitList().slice();
+    const pr = store.getVisitPriorities();
+    for (const id of share.visitList || []) {
+      if (!visit.includes(id)) visit.push(id);
+      if (share.priorities && share.priorities[id]) pr[id] = share.priorities[id];
+    }
+    store.setVisitList(visit);
+    store.setVisitPriorities(pr);
+    const done = new Set(store.getDone());
+    (share.done || []).forEach((id) => done.add(id));
+    store.setDone([...done]);
+    if (share.meetup && !store.getMeetup(state.park)) {
+      store.setMeetup(state.park, { ...share.meetup, park: state.park });
+    }
+  }
+  state.pendingShare = null;
+  syncMeetupMarker();
+  renderFavorites();
+  renderMap();
+  toast(mode === 'replace' ? '공유 계획으로 교체했습니다' : '공유 계획을 추가했습니다');
+}
+
+async function consumeShareFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const s = params.get('s');
+    if (!s) return;
+    state.pendingShare = await decodeShareParam(s);
+    // Clean URL without losing path
+    params.delete('s');
+    const clean = `${window.location.pathname}${params.toString() ? `?${params}` : ''}${window.location.hash || ''}`;
+    window.history.replaceState({}, '', clean);
+    openSheetPanel('favorites');
+    toast('공유된 방문 계획을 받았습니다');
+  } catch (err) {
+    toast(err.message || '공유 링크를 읽지 못했습니다');
+  }
+}
 function toggleFacilityFilter(key) {
   if (key === 'includeEstimated') {
     store.setSettings({ includeEstimated: !includeLowTrust() });
@@ -1053,10 +1699,32 @@ function bindEvents() {
   });
 
   els.locBtn.addEventListener('click', toggleLocation);
+  if (els.nearbyBtn) {
+    els.nearbyBtn.addEventListener('click', () => {
+      if (state.tab === 'familyNearby') closeSheet();
+      else openSheetPanel('familyNearby');
+    });
+  }
+  if (els.mapFab) {
+    els.mapFab.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-fab]');
+      if (!b) return;
+      const act = b.dataset.fab;
+      if (act === 'nearby') {
+        if (state.tab === 'familyNearby') closeSheet();
+        else openSheetPanel('familyNearby');
+      } else if (act === 'restroom') jumpNearest('restroom');
+      else if (act === 'firstAid') jumpNearest('firstAid');
+      else if (act === 'baby') jumpNearest('baby');
+      else if (act === 'meetup') viewMeetup();
+    });
+  }
 
   els.filterBtn.addEventListener('click', () => {
-    if (state.tab === 'filter') { openTab(state.prevTab); }
-    else openTab('filter');
+    if (state.tab === 'filter') {
+      if (state.prevTab && state.prevTab !== 'filter') openSheetPanel(state.prevTab);
+      else closeSheet();
+    } else openSheetPanel('filter');
   });
 
   els.search.addEventListener('input', (e) => {
@@ -1071,12 +1739,7 @@ function bindEvents() {
   els.nav.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-tab]');
     if (!b) return;
-    const tab = b.dataset.tab;
-    // Start list tabs from a clean slate (don't carry over a stale search query).
-    if (state.query) { state.query = ''; els.search.value = ''; }
-    if (tab === 'map') { closeSheet(); return; }
-    if (state.tab === tab) { closeSheet(); return; }
-    openTab(tab);
+    toggleLayerTab(b.dataset.tab);
   });
 
   // delegated clicks inside the sheet body
@@ -1094,25 +1757,39 @@ function bindEvents() {
       return;
     }
 
+    const famQuick = t.closest('button[data-family-quick]');
+    if (famQuick) {
+      applyFamilyQuickAction(famQuick.dataset.familyQuick);
+      return;
+    }
+
+    const sortBtn = t.closest('button[data-visit-sort]');
+    if (sortBtn) {
+      state.visitSort = sortBtn.dataset.visitSort;
+      renderFavorites();
+      return;
+    }
+
     // detail action buttons (fav/route/direction/visit) — check data-act first
     const act = t.closest('button[data-act]');
     if (act) {
       const id = act.dataset.poi;
-      if (act.dataset.act === 'fav') { const on = store.toggleFavorite(id); toast(on ? '즐겨찾기에 추가' : '즐겨찾기 해제'); renderDetail(id); syncLabelOptions(); }
-      if (act.dataset.act === 'route') showRoute(id);
-      if (act.dataset.act === 'direction') {
+      const a = act.dataset.act;
+      if (a === 'fav') { const on = store.toggleFavorite(id); toast(on ? '즐겨찾기에 추가' : '즐겨찾기 해제'); renderDetail(id); syncLabelOptions(); }
+      if (a === 'route') showRoute(id);
+      if (a === 'direction') {
         state.startOrigin = null;
         showDirection(id);
       }
-      if (act.dataset.act === 'visit') { const on = store.toggleVisit(id); toast(on ? '방문 목록에 추가' : '방문 목록에서 제거'); renderDetail(id); }
-      if (act.dataset.act === 'clear-route') {
+      if (a === 'visit') { const on = store.toggleVisit(id); toast(on ? '방문 목록에 추가' : '방문 목록에서 제거'); renderDetail(id); }
+      if (a === 'clear-route') {
         state.startOrigin = null;
         state.manualStart = null;
         clearNavLines();
         if (state.selectedId) renderDetail(state.selectedId);
         toast('방향 안내를 지웠습니다');
       }
-      if (act.dataset.act === 'origin-user') {
+      if (a === 'origin-user') {
         state.startOrigin = 'user';
         state.manualStart = null;
         if (state.user && state.user.coords && isInsidePark(state.user.coords)) {
@@ -1122,11 +1799,40 @@ function bindEvents() {
           requestLocationForDirection(id);
         }
       }
-      if (act.dataset.act === 'origin-entrance') useEntranceOrigin(id);
-      if (act.dataset.act === 'origin-map') beginMapOriginPick(id);
-      if (act.dataset.act === 'route-from-entrance') useEntranceOrigin(id);
-      if (act.dataset.act === 'keep-map') { state.outsideParkChoice = 'keep'; clearNavLines(); toast('파크 지도를 유지합니다'); map.resetView(parkMeta()); }
-      if (act.dataset.act === 'switch-other-park') { setPark(state.park === 'TDL' ? 'TDS' : 'TDL'); }
+      if (a === 'origin-entrance') useEntranceOrigin(id);
+      if (a === 'origin-map') beginMapOriginPick(id);
+      if (a === 'route-from-entrance') useEntranceOrigin(id);
+      if (a === 'keep-map') { state.outsideParkChoice = 'keep'; clearNavLines(); toast('파크 지도를 유지합니다'); map.resetView(parkMeta()); }
+      if (a === 'switch-other-park') { setPark(state.park === 'TDL' ? 'TDS' : 'TDL'); }
+      if (a === 'request-location') { if (!state.locating) toggleLocation(); }
+      if (a === 'nearby-from-entrance') showNearbyFromEntrance();
+      if (a === 'nearby-jump') jumpNearest(act.dataset.nearby);
+      if (a === 'meetup-view') viewMeetup();
+      if (a === 'meetup-direction') directionToMeetup();
+      if (a === 'meetup-pick-map') beginMeetupPick();
+      if (a === 'meetup-from-selected') setMeetupFromSelected();
+      if (a === 'meetup-entrance') setMeetupEntrance();
+      if (a === 'meetup-set-poi') setMeetupFromPoi(id);
+      if (a === 'meetup-clear') { store.clearMeetup(state.park); syncMeetupMarker(); toast('집결지를 삭제했습니다'); renderSettings(); }
+      if (a === 'meetup-note-save') {
+        const m = store.getMeetup(state.park);
+        if (m) {
+          const noteEl = els.sheetBody.querySelector('#meetup-note');
+          store.setMeetup(state.park, { ...m, note: (noteEl && noteEl.value) || '' });
+          toast('메모를 저장했습니다');
+          renderSettings();
+        }
+      }
+      if (a === 'share-link') createShareLink(false);
+      if (a === 'share-qr') createShareLink(true);
+      if (a === 'share-export') exportShareFile();
+      if (a === 'share-import-file') {
+        const inp = els.sheetBody.querySelector('#share-file');
+        if (inp) inp.click();
+      }
+      if (a === 'share-merge') applyPendingShare('merge');
+      if (a === 'share-replace') applyPendingShare('replace');
+      if (a === 'share-cancel') { state.pendingShare = null; renderFavorites(); }
       return;
     }
 
@@ -1141,8 +1847,13 @@ function bindEvents() {
       const i = list.indexOf(id);
       if (up && i > 0) { [list[i - 1], list[i]] = [list[i], list[i - 1]]; store.setVisitList(list); }
       else if (down && i >= 0 && i < list.length - 1) { [list[i + 1], list[i]] = [list[i], list[i + 1]]; store.setVisitList(list); }
-      else if (rm) { list = list.filter((x) => x !== id); store.setVisitList(list); }
-      else if (dn) { store.toggleDone(id); }
+      else if (rm) {
+        list = list.filter((x) => x !== id);
+        store.setVisitList(list);
+        const pr = store.getVisitPriorities();
+        delete pr[id];
+        store.setVisitPriorities(pr);
+      } else if (dn) { store.toggleDone(id); }
       renderFavorites();
       return;
     }
@@ -1188,6 +1899,11 @@ function bindEvents() {
       renderMap();
       if (state.tab === 'restrooms') renderRestrooms();
     }
+    if (e.target.id === 'set-family-badge') {
+      store.setSettings({ showFamilyRideBadge: e.target.checked });
+      renderMap();
+      if (state.tab === 'attractions' || state.tab === 'favorites' || state.tab === 'detail') renderSheet();
+    }
     if (e.target.id === 'set-pregate') {
       const on = e.target.checked;
       store.setSettings({ includePregate: on });
@@ -1200,6 +1916,25 @@ function bindEvents() {
     if (e.target.id === 'set-visitdate') {
       store.setVisitDate(e.target.value);
       toast(`방문 예정일: ${e.target.value}`);
+    }
+    if (e.target.matches('select[data-visit-prio]')) {
+      store.setVisitPriority(e.target.dataset.visitPrio, e.target.value);
+      renderFavorites();
+    }
+    if (e.target.id === 'share-file' && e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          state.pendingShare = parseShareJson(String(reader.result));
+          renderFavorites();
+          toast('공유 파일을 읽었습니다. 추가·교체를 선택하세요.');
+        } catch (err) {
+          toast(err.message || 'JSON을 읽지 못했습니다');
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
     }
   });
 
@@ -1255,6 +1990,7 @@ function init() {
   syncNav();
   updateOnline();
   map.invalidate();
+  consumeShareFromUrl();
 
   if ('serviceWorker' in navigator) {
     // Reload once when a NEW service worker takes control (so an updated deploy
