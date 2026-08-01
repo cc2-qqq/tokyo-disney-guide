@@ -26,6 +26,9 @@
     <button id="loc-btn" class="topbtn" type="button" aria-label="현재 위치">
       <span aria-hidden="true">&#128205;</span>
     </button>
+    <button id="nearby-btn" class="topbtn" type="button" aria-label="지금 근처">
+      <span class="nearby-btn-label" aria-hidden="true">근처</span>
+    </button>
     <button id="filter-btn" class="topbtn" type="button" aria-label="필터">
       <span aria-hidden="true">&#9776;</span>
     </button>
@@ -35,6 +38,13 @@
 
   <main>
     <div id="map" aria-label="지도"></div>
+    <div id="map-fab" class="map-fab" role="toolbar" aria-label="현장 빠른 버튼">
+      <button type="button" data-fab="nearby" class="fab-btn">지금 근처</button>
+      <button type="button" data-fab="restroom" class="fab-btn">화장실</button>
+      <button type="button" data-fab="firstAid" class="fab-btn">구호실</button>
+      <button type="button" data-fab="baby" class="fab-btn">수유</button>
+      <button type="button" data-fab="meetup" class="fab-btn">집결</button>
+    </div>
     <div id="offline-banner" class="offline-banner" role="status" aria-hidden="true">오프라인 상태입니다 · 벡터 배경은 안 보일 수 있지만 목록·검색·즐겨찾기는 사용할 수 있어요</div>
 
     <section id="sheet" class="sheet" aria-hidden="true" aria-label="상세 패널">
@@ -62,6 +72,7 @@
   <script src="./vendor/pmtiles/pmtiles.js"></script>
   <script src="./vendor/protomaps/basemaps.js"></script>
   <script src="./vendor/maplibre-gl-leaflet/leaflet-maplibre-gl.js"></script>
+  <script src="./vendor/qrcode/qrcode.js"></script>
   <script type="module" src="./js/app.js"></script>
 </body>
 </html>

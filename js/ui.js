@@ -6,6 +6,7 @@ import {
   MEDIUM_ESTIMATE_DETAIL_NOTE,
 } from './labels.js';
 import { formatDistance, compass8, bearingDegrees } from './geo.js';
+import { familyRideSummary } from './family.js';
 
 export function esc(s) {
   return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => (
@@ -23,7 +24,7 @@ function badge(poi) {
   return `<span class="badge ${b.cls}">${esc(b.text)}</span>`;
 }
 
-export function listItem(poi, { distance, isFav, isDone } = {}) {
+export function listItem(poi, { distance, isFav, isDone, children, showFamilyBadge } = {}) {
   const name = esc(poi.nameKo || poi.name);
   const sub = esc(poi.nameNote || poi.nameEn || '');
   const area = esc(poi.areaNameKo || '');
@@ -34,9 +35,16 @@ export function listItem(poi, { distance, isFav, isDone } = {}) {
   let statusBadge = '';
   if (poi.operatingStatus === 'closed_longterm') statusBadge = '<span class="badge badge-closed">운영 종료</span>';
   else if (poi._closedOnVisit) statusBadge = '<span class="badge badge-closed">방문일 휴장</span>';
-  const heightMeta = poi.type === 'attraction'
-    ? `<span class="li-height">키 기준: ${esc(heightTierLabel(poi))}</span>`
-    : '';
+  let familyMeta = '';
+  if (poi.type === 'attraction' && showFamilyBadge !== false && children && children.length) {
+    const s = familyRideSummary(poi, children);
+    familyMeta = `<span class="li-family">
+      <span class="fam-badge ${s.cls}">${esc(s.text)}</span>
+      <span class="fam-badge fam-height">${esc(heightTierLabel(poi))}</span>
+    </span>`;
+  } else if (poi.type === 'attraction') {
+    familyMeta = `<span class="li-height">키 기준: ${esc(heightTierLabel(poi))}</span>`;
+  }
   return `
     <li>
       <button class="li" data-poi="${esc(poi.id)}" type="button">
@@ -44,7 +52,7 @@ export function listItem(poi, { distance, isFav, isDone } = {}) {
         <span class="li-body">
           <span class="li-name">${name} ${favMark}${doneMark}</span>
           <span class="li-meta">${area ? esc(area) + ' · ' : ''}${esc(TYPE_LABEL[poi.type] || '')}${sub ? ' · ' + sub : ''}</span>
-          ${heightMeta}
+          ${familyMeta}
         </span>
         <span class="li-right">${dist}${statusBadge}${badge(poi)}</span>
       </button>
@@ -57,6 +65,8 @@ export function listHtml(pois, opts = {}) {
     distance: p._dist,
     isFav: opts.isFav && opts.isFav(p.id),
     isDone: opts.isDone && opts.isDone(p.id),
+    children: opts.children,
+    showFamilyBadge: opts.showFamilyBadge,
   })).join('')}</ul>`;
 }
 
@@ -210,8 +220,14 @@ function closureWarning(closure) {
     </div>`;
 }
 
-export function attractionDetail(poi, { children, isFav, inVisit, distance, userCoords, direction, visitDate, routeInfo, canWalkRoute }) {
+export function attractionDetail(poi, { children, isFav, inVisit, distance, userCoords, direction, visitDate, routeInfo, canWalkRoute, showFamilyBadge }) {
   const closure = closureOnDate(poi, visitDate);
+  const fam = (showFamilyBadge !== false && children && children.length)
+    ? familyRideSummary(poi, children)
+    : null;
+  const famLine = fam
+    ? `<div class="li-family detail-family"><span class="fam-badge ${fam.cls}">${esc(fam.text)}</span><span class="fam-badge fam-height">${esc(heightTierLabel(poi))}</span></div>`
+    : '';
   const distLine = distance != null
     ? `<div class="dg-k">현재 위치에서</div><div class="dg-v">직선거리 ${esc(formatDistance(distance))}</div>`
     : `<div class="dg-k">현재 위치에서</div><div class="dg-v">현재 위치를 켜면 직선거리를 볼 수 있어요</div>`;
@@ -226,6 +242,7 @@ export function attractionDetail(poi, { children, isFav, inVisit, distance, user
       </div>
       ${closedBanner(poi)}
       ${closureWarning(closure)}
+      ${famLine}
       <div class="detail-tags">
         <span class="tag">${esc(poi.areaNameKo || '')}</span>
         <span class="tag">${esc(heightTierLabel(poi))}</span>

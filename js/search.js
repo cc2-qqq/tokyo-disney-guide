@@ -58,6 +58,7 @@ export function attractionMatchesFilters(poi, filters, ctx) {
   if (f.outdoor && poi.indoor) return false;
   if (f.rainy && !poi.rainyRecommended) return false;
   if (f.favorites && !(ctx && ctx.isFavorite(poi.id))) return false;
+  // Visit-day official closure exclusion is applied in app via attractionPassesFamilyExtras.
   return true;
 }
 
