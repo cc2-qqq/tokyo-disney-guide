@@ -443,8 +443,8 @@ function renderSettings() {
 
     <h3 class="sheet-h3">데이터 현황</h3>
     <div class="notice">
-      <p><strong>TDL</strong> 화장실 9곳 지도 기반 추정(대략 5~10m), 추가 검증 4곳, 미확인 1곳(비표시). 중앙구호실 1곳.</p>
-      <p><strong>TDS</strong> 화장실 10곳·베이비케어 2곳·중앙구호실 1곳 — 공식 PDF 기반 추정(Google POI 미확인). 기본은 Medium 이상 표시, Low는 「낮은 신뢰도 위치까지 표시」로 켭니다.</p>
+      <p><strong>TDL</strong> 화장실 25곳(유료 19·프리게이트 5·호텔 1, unknown 1 포함). High 9·Medium 7·Low 8·Unknown 1. 베이비케어 1·중앙구호실 1(화장실 수 제외).</p>
+      <p><strong>TDS</strong> 화장실 18곳(유료 15·프리게이트 2·호텔 1). Medium 11·Low 7. 베이비케어 2·중앙구호실 1(화장실 수 제외). 기본은 Medium 이상, Low·입구 밖은 필터로 켭니다.</p>
       <p><strong>키 기준</strong> 공식 FAQ(2026-08-01) 기준으로 운영 어트랙션 전수 반영. 레이징 스피리츠는 117~195cm.</p>
       <p><strong>보행 경로</strong> 상세 보행 경로는 검증 중입니다. 현재는 목적지 방향과 직선거리만 안내합니다. 현재 위치가 없거나 파크 밖이면 정문·지도에서 출발점을 고를 수 있습니다.</p>
       <p><strong>운영 종료·장기 휴장</strong> 스페이스 마운틴·버즈 라이트이어(TDL), 머메이드 라군 시어터(TDS)는 기본 목록·지도에서 제외했습니다.</p>
