@@ -118,9 +118,10 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
   border: 3px solid #fff; box-shadow: 0 0 0 2px rgba(26,115,232,.4);
 }
 
-/* ---------- Pale background tiles (so Korean overlay labels dominate) ---------- */
-/* Uniform dimming of the whole basemap — not selective glyph hiding. */
-#map .leaflet-tile-pane { filter: saturate(.82) brightness(1.05); opacity: .6; }
+/* ---------- Unlabeled vector basemap (MapLibre GL in tile pane) ---------- */
+#map.basemap-fallback { background: var(--surface-2); }
+#map .maplibregl-map { background: transparent; }
+#map .maplibregl-ctrl-attrib { display: none; } /* Leaflet attribution shows Protomaps/OSM */
 
 /* ---------- Korean self-drawn map labels ---------- */
 .map-label-wrap { background: none; border: 0; }
@@ -151,7 +152,6 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
   border-radius: 7px; padding: 1px 6px; box-shadow: 0 1px 5px rgba(0,0,0,.22);
 }
 
-:root[data-theme="dark"] #map .leaflet-tile-pane { filter: grayscale(.35) brightness(.52) contrast(.95); opacity: .5; }
 :root[data-theme="dark"] .map-label {
   color: #eaf1f8;
   text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 5px #000, 0 1px 2px rgba(0,0,0,.95);
@@ -167,7 +167,6 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
   color: #7bb8f5; background: rgba(24,36,48,.9);
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) #map .leaflet-tile-pane { filter: grayscale(.35) brightness(.52) contrast(.95); opacity: .5; }
   :root:not([data-theme="light"]) .map-label {
     color: #eaf1f8;
     text-shadow: 0 0 3px #000, 0 0 3px #000, 0 0 5px #000, 0 1px 2px rgba(0,0,0,.95);

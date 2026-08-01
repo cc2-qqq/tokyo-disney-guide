@@ -112,7 +112,6 @@ function syncLabelOptions() {
   map.setLabelOptions({
     selectedId: state.selectedId,
     favIds: new Set(store.getFavorites()),
-    mapLang: store.getSettings().mapLang,
   });
 }
 
@@ -310,12 +309,8 @@ function renderSettings() {
     <button class="btn" id="map-reset" type="button">지도 초기화</button>
     <p class="muted small">선택한 파크 전체가 보기 좋은 범위로 돌아옵니다. 경로·선택도 함께 지워집니다.</p>
 
-    <h3 class="sheet-h3">지도 라벨 표기</h3>
-    <div class="chips" role="group" aria-label="지도 라벨 표기">
-      <button class="chip ${(s.mapLang || 'ko') === 'ko' ? 'chip-on' : ''}" data-maplang="ko" type="button" aria-pressed="${(s.mapLang || 'ko') === 'ko'}">한국어 중심</button>
-      <button class="chip ${s.mapLang === 'ko-ja' ? 'chip-on' : ''}" data-maplang="ko-ja" type="button" aria-pressed="${s.mapLang === 'ko-ja'}">한국어 + 일본어 보조</button>
-    </div>
-    <p class="muted small">지도에 표시되는 구역·어트랙션 이름은 한국어입니다. "한국어 + 일본어 보조"를 켜면 지도 라벨 아래에 작은 일본어 이름이 함께 표시됩니다. 일본어·영어 이름은 상세 카드에서도 확인할 수 있어요.</p>
+    <h3 class="sheet-h3">지도 라벨</h3>
+    <p class="muted small">배경지도는 글자 없는 구조 지도이며, 지도 위 이름은 <strong>한국어만</strong> 표시합니다. 일본어·영어 이름은 시설 상세 카드에서만 보조 정보로 확인할 수 있어요.</p>
 
     <h3 class="sheet-h3">테마</h3>
     <div class="chips">
@@ -324,7 +319,7 @@ function renderSettings() {
 
     <h3 class="sheet-h3">오프라인 사용 안내</h3>
     <div class="notice">
-      <p>출국 전에 TDL과 TDS 지도를 열고 주요 구역을 확대해 두면 일부 지도 타일을 오프라인에서도 볼 수 있습니다. 지도 타일이 없더라도 목록과 저장 정보는 사용할 수 있습니다.</p>
+      <p>앱 셸·데이터는 오프라인에서도 동작합니다. 벡터 배경(PMTiles)은 Range 요청으로 구간만 받으며 Service Worker에 전체 파일을 미리 넣지 않습니다. 배경 로딩에 실패하면 일본어 지도 대신 단색 배경과 한국어 마커·목록을 표시합니다.</p>
     </div>
 
     <h3 class="sheet-h3">데이터 현황</h3>
@@ -735,13 +730,15 @@ function bindEvents() {
     const vbtn = t.closest('.vbtn[data-poi]');
     if (vbtn) { selectPoi(vbtn.dataset.poi); return; }
 
-    // settings: theme
+    // settings: theme (also refreshes unlabeled vector basemap flavor)
     const themeBtn = t.closest('button[data-theme]');
-    if (themeBtn) { applyTheme(themeBtn.dataset.theme); store.setSettings({ theme: themeBtn.dataset.theme }); renderSettings(); syncLabelOptions(); return; }
-
-    // settings: map label language
-    const mlBtn = t.closest('button[data-maplang]');
-    if (mlBtn) { store.setSettings({ mapLang: mlBtn.dataset.maplang }); renderSettings(); syncLabelOptions(); toast(mlBtn.dataset.maplang === 'ko-ja' ? '지도 라벨: 한국어 + 일본어' : '지도 라벨: 한국어'); return; }
+    if (themeBtn) {
+      store.setSettings({ theme: themeBtn.dataset.theme });
+      applyTheme(themeBtn.dataset.theme);
+      renderSettings();
+      syncLabelOptions();
+      return;
+    }
   });
 
   // settings inputs
@@ -786,6 +783,7 @@ function applyTheme(theme) {
   const root = document.documentElement;
   if (theme === 'auto') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', theme);
+  if (map && typeof map.setBasemapTheme === 'function') map.setBasemapTheme(theme);
 }
 
 function updateOnline() {
@@ -797,16 +795,18 @@ function updateOnline() {
 // ---- init ----
 function init() {
   cacheEls();
-  applyTheme(store.getSettings().theme);
   // park toggle initial state
   els.parkToggle.querySelectorAll('button').forEach((b) => {
     const on = b.dataset.park === state.park;
     b.classList.toggle('on', on);
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
+  // Create the map first, then apply theme so basemap flavor can sync safely.
   map.init(parkMeta(), {
-    onTileError: () => toast('지도 타일을 불러오지 못했습니다. 오프라인이면 목록·검색·즐겨찾기를 이용하세요.', 4000),
+    theme: store.getSettings().theme,
+    onTileError: () => toast('벡터 배경지도를 불러오지 못했습니다. 단색 배경과 한국어 마커·목록으로 계속할 수 있어요.', 4000),
   });
+  applyTheme(store.getSettings().theme);
   renderMap();
   syncLabelSources();
   syncLabelOptions();

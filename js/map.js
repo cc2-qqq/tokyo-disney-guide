@@ -1,5 +1,7 @@
 // Leaflet map wrapper. Uses divIcon markers (no external marker images needed).
+// Basemap: unlabeled Protomaps PMTiles via MapLibre (NOT OSM Japanese raster).
 /* global L */
+import { ensurePmtilesProtocol, buildUnlabeledStyle, solidFallbackStyle } from './basemap.js';
 
 const ICONS = {
   attraction: { glyph: '\u{1F3A0}', cls: 'm-attraction', label: '어트랙션' },
@@ -17,8 +19,7 @@ function escapeHtml(s) {
 
 export function createMapController(elId) {
   let map = null;
-  let tileLayer = null;
-  const poiLayer = () => markerGroup;
+  let glLayer = null;
   let markerGroup = null;
   let labelGroup = null;
   let markers = new Map(); // id -> marker
@@ -26,12 +27,13 @@ export function createMapController(elId) {
   let accuracyCircle = null;
   let directionLine = null;
   let routeLine = null;
-  let tileErrorShown = false;
-  let onTileError = null;
+  let basemapFailed = false;
+  let onBasemapError = null;
+  let currentTheme = 'auto';
+  let currentParkId = 'TDL';
 
   // ---- Korean self-drawn label layer state ----
-  // Background tiles carry the raster (Japanese) labels faintly; these are the
-  // app's own Korean labels drawn on top so the map reads in Korean.
+  // Basemap is unlabeled vector structure only; these are the only map texts.
   const labelState = {
     parkMeta: null,
     areas: [],
@@ -40,11 +42,70 @@ export function createMapController(elId) {
     landmark: new Set(),
     selectedId: null,
     favIds: new Set(),
-    mapLang: 'ko', // 'ko' | 'ko-ja'
+    mapLang: 'ko', // always Korean-only on the map
   };
 
-  function init(parkMeta, { onTileError: cb } = {}) {
-    onTileError = cb;
+  function applyBasemapStyle(parkId, theme, { fallback = false } = {}) {
+    currentParkId = parkId || currentParkId;
+    currentTheme = theme || currentTheme;
+    if (!map) return;
+    if (typeof L.maplibreGL !== 'function') {
+      useSolidFallback('MapLibre GL Leaflet plugin missing');
+      return;
+    }
+    let style;
+    try {
+      if (!fallback) ensurePmtilesProtocol();
+      style = fallback
+        ? solidFallbackStyle(currentTheme)
+        : buildUnlabeledStyle(currentParkId, currentTheme);
+    } catch (err) {
+      useSolidFallback(err && err.message);
+      return;
+    }
+
+    if (!glLayer) {
+      glLayer = L.maplibreGL({
+        style,
+        interactive: false,
+        attributionControl: false,
+        padding: 0.08,
+      }).addTo(map);
+      const ml = glLayer.getMaplibreMap && glLayer.getMaplibreMap();
+      if (ml) {
+        ml.on('error', (e) => {
+          const msg = (e && e.error && (e.error.message || e.error.statusText)) || '';
+          // Ignore normal tile misses near extract edges / overzoom.
+          if (!msg || /404|not found|tile|AbortError|cancel/i.test(msg)) return;
+          // Only hard-fail on byte-serving / network / style source problems.
+          if (/Failed to fetch|NetworkError|content-length|Byte Serving|ETag|pmtiles/i.test(msg)) {
+            if (!basemapFailed && !fallback) useSolidFallback(msg);
+          }
+        });
+      }
+    } else {
+      const ml = glLayer.getMaplibreMap && glLayer.getMaplibreMap();
+      if (ml) ml.setStyle(style);
+    }
+    map.getContainer().classList.toggle('basemap-fallback', !!fallback);
+  }
+
+  function useSolidFallback(reason) {
+    if (basemapFailed || !map) return;
+    basemapFailed = true;
+    try {
+      applyBasemapStyle(currentParkId, currentTheme, { fallback: true });
+    } catch {
+      /* ignore */
+    }
+    try { map.getContainer().classList.add('basemap-fallback'); } catch { /* ignore */ }
+    onBasemapError && onBasemapError(reason || 'vector basemap failed');
+  }
+
+  function init(parkMeta, { onTileError: cb, theme } = {}) {
+    onBasemapError = cb;
+    currentTheme = theme || 'auto';
+    currentParkId = parkMeta.id || 'TDL';
     map = L.map(elId, {
       center: parkMeta.center,
       zoom: parkMeta.defaultZoom || parkMeta.zoom,
@@ -58,22 +119,21 @@ export function createMapController(elId) {
       bounceAtZoomLimits: false,
     });
     labelState.parkMeta = parkMeta;
-    // OpenStreetMap raster kept (clear ODbL terms + offline-cache friendly).
-    // Rendered pale via CSS (#map .leaflet-tile-pane) so Korean overlay labels dominate.
-    tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors',
-      crossOrigin: true,
-    }).addTo(map);
-    tileLayer.on('tileerror', () => {
-      if (!tileErrorShown) {
-        tileErrorShown = true;
-        onTileError && onTileError();
-      }
-    });
+
+    if (map.attributionControl) {
+      map.attributionControl.setPrefix(false);
+      map.attributionControl.addAttribution(
+        '<a href="https://protomaps.com" target="_blank" rel="noopener">Protomaps</a> · '
+        + '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">&copy; OpenStreetMap</a>',
+      );
+    }
+
+    // Unlabeled vector PMTiles basemap (no Japanese raster tiles).
+    applyBasemapStyle(currentParkId, currentTheme);
+
     markerGroup = L.layerGroup().addTo(map);
 
-    // Dedicated non-interactive pane above markers for text labels.
+    // Dedicated non-interactive pane above markers for Korean text labels.
     map.createPane('labels');
     const lp = map.getPane('labels');
     lp.style.zIndex = 620;
@@ -90,15 +150,24 @@ export function createMapController(elId) {
   }
 
   function setPark(parkMeta) {
-    tileErrorShown = false;
+    basemapFailed = false;
     labelState.parkMeta = parkMeta;
+    currentParkId = parkMeta.id || currentParkId;
     clearRoute();
     clearDirection();
-    // Apply this park's drag limits, then frame the whole park.
+    // Apply this park's drag limits, then swap unlabeled basemap + frame.
     map.setMinZoom(parkMeta.minZoom);
     map.setMaxZoom(parkMeta.maxZoom);
     map.setMaxBounds(parkMeta.maxBounds ? L.latLngBounds(parkMeta.maxBounds) : null);
+    applyBasemapStyle(currentParkId, currentTheme);
     resetView(parkMeta);
+  }
+
+  function setBasemapTheme(theme) {
+    currentTheme = theme || 'auto';
+    if (!map) return; // theme may be applied before Leaflet init
+    if (!basemapFailed) applyBasemapStyle(currentParkId, currentTheme);
+    else applyBasemapStyle(currentParkId, currentTheme, { fallback: true });
   }
 
   // Frame the park nicely (used on switch + "지도 초기화").
@@ -246,10 +315,11 @@ export function createMapController(elId) {
     renderLabels();
   }
 
-  function setLabelOptions({ selectedId, favIds, mapLang } = {}) {
+  function setLabelOptions({ selectedId, favIds } = {}) {
     if (selectedId !== undefined) labelState.selectedId = selectedId;
     if (favIds !== undefined) labelState.favIds = favIds instanceof Set ? favIds : new Set(favIds || []);
-    if (mapLang !== undefined) labelState.mapLang = mapLang || 'ko';
+    // Map labels are Korean-only; Japanese names stay in detail cards.
+    labelState.mapLang = 'ko';
     renderLabels();
   }
 
@@ -282,7 +352,7 @@ export function createMapController(elId) {
     if (zoom >= 16) {
       for (const ar of s.areas) {
         if (!ar.labelCenter) continue;
-        out.push({ key: 'area:' + ar.id, kind: 'area', latlng: ar.labelCenter, text: ar.nameKo, sub: s.mapLang === 'ko-ja' ? ar.nameEn : null, priority: 2 });
+        out.push({ key: 'area:' + ar.id, kind: 'area', latlng: ar.labelCenter, text: ar.nameKo, sub: null, priority: 2 });
       }
     }
     const showRep = zoom >= 17;
@@ -297,7 +367,7 @@ export function createMapController(elId) {
       if (isRep && showRep) { include = true; priority = Math.min(priority, 4); }
       if (showAll) { include = true; priority = Math.min(priority, 5); }
       if (include) {
-        out.push({ key: 'at:' + at.id, kind: 'attr', latlng: at.coordinates, text: at.nameKo, sub: s.mapLang === 'ko-ja' ? at.nameJa : null, priority });
+        out.push({ key: 'at:' + at.id, kind: 'attr', latlng: at.coordinates, text: at.nameKo, sub: null, priority });
       }
     }
     // Selected POI (attraction or facility) always shown, highest priority.
@@ -310,7 +380,7 @@ export function createMapController(elId) {
           kind: sel.type === 'attraction' ? 'attr' : 'facility',
           latlng: sel.coordinates,
           text: sel.nameKo || sel.name,
-          sub: s.mapLang === 'ko-ja' ? (sel.nameJa || null) : null,
+          sub: null,
           priority: 1, selected: true,
         });
       }
@@ -357,7 +427,7 @@ export function createMapController(elId) {
   function invalidate() { if (map) setTimeout(() => { map.invalidateSize(); renderLabels(); }, 50); }
 
   return {
-    init, setPark, resetView, renderMarkers, highlight, focusPoi,
+    init, setPark, setBasemapTheme, resetView, renderMarkers, highlight, focusPoi,
     setUserLocation, centerOnUser, showDirection, clearDirection,
     showRoute, clearRoute, invalidate,
     setLabelSources, setLabelOptions, renderLabels,

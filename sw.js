@@ -1,9 +1,7 @@
 // Service worker: offline app shell + data caching. Relative paths keep it working
 // on GitHub Pages sub-paths (e.g. /tokyo-disney-guide/).
-const VERSION = 'tdg-v6';
+const VERSION = 'tdg-v7';
 const SHELL_CACHE = `${VERSION}-shell`;
-const TILE_CACHE = `${VERSION}-tiles`;
-const MAX_TILES = 400;
 
 const SHELL = [
   './',
@@ -12,8 +10,14 @@ const SHELL = [
   './css/styles.css',
   './vendor/leaflet/leaflet.css',
   './vendor/leaflet/leaflet.js',
+  './vendor/maplibre/maplibre-gl.css',
+  './vendor/maplibre/maplibre-gl.js',
+  './vendor/pmtiles/pmtiles.js',
+  './vendor/protomaps/basemaps.js',
+  './vendor/maplibre-gl-leaflet/leaflet-maplibre-gl.js',
   './js/app.js',
   './js/map.js',
+  './js/basemap.js',
   './js/store.js',
   './js/geo.js',
   './js/search.js',
@@ -48,16 +52,8 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-function isTile(url) {
-  return /tile\.openstreetmap\.org/.test(url);
-}
-
-async function trimTiles() {
-  const cache = await caches.open(TILE_CACHE);
-  const keys = await cache.keys();
-  if (keys.length > MAX_TILES) {
-    for (let i = 0; i < keys.length - MAX_TILES; i++) await cache.delete(keys[i]);
-  }
+function isPmtiles(url) {
+  return /\.pmtiles(\?|$)/i.test(url);
 }
 
 self.addEventListener('fetch', (e) => {
@@ -65,20 +61,13 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = req.url;
 
-  // OSM tiles: cache-first, then network (best-effort, no failure surfaced).
-  if (isTile(url)) {
-    e.respondWith((async () => {
-      const cache = await caches.open(TILE_CACHE);
-      const hit = await cache.match(req);
-      if (hit) return hit;
-      try {
-        const res = await fetch(req);
-        if (res && res.ok) { cache.put(req, res.clone()); trimTiles(); }
-        return res;
-      } catch {
-        return new Response('', { status: 504, statusText: 'offline tile' });
-      }
-    })());
+  // PMTiles uses HTTP Range requests. Never cache byte ranges in SW —
+  // caching a partial Response breaks subsequent random-access reads.
+  if (isPmtiles(url) || req.headers.has('Range')) {
+    e.respondWith(fetch(req).catch(() => new Response('', {
+      status: 504,
+      statusText: 'offline pmtiles',
+    })));
     return;
   }
 
