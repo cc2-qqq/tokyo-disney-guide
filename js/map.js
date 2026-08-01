@@ -44,6 +44,7 @@ export function createMapController(elId) {
   // ---- App overlay labels (attractions / selected facilities).
   // Vector basemap keeps restaurants/shops/roads; attractions+toilets stay app-owned.
   const labelState = {
+    category: 'map', // map | attractions | restrooms | favorites
     parkMeta: null,
     areas: [],
     attractions: [],
@@ -455,10 +456,11 @@ export function createMapController(elId) {
     renderLabels();
   }
 
-  function setLabelOptions({ selectedId, favIds, mapLabelMode } = {}) {
+  function setLabelOptions({ selectedId, favIds, mapLabelMode, category } = {}) {
     if (selectedId !== undefined) labelState.selectedId = selectedId;
     if (favIds !== undefined) labelState.favIds = favIds instanceof Set ? favIds : new Set(favIds || []);
     if (mapLabelMode !== undefined) labelState.mapLabelMode = mapLabelMode;
+    if (category !== undefined) labelState.category = category;
     renderLabels();
   }
 
@@ -518,38 +520,60 @@ export function createMapController(elId) {
         });
       }
     }
+    const cat = s.category || 'map';
+    const hideAttrLabels = cat === 'restrooms';
+    const hideNonFavAttr = cat === 'favorites';
+    const attractionsOnly = cat === 'attractions';
+
     // App attraction labels (vector attraction names are hidden in basemap).
     const showRep = zoom >= 16;
     const showAll = zoom >= 17;
-    for (const at of s.attractions) {
-      if (!at.coordinates) continue;
-      if ((at.operatingStatus || 'operating') !== 'operating') continue;
-      const isFav = s.favIds.has(at.id);
-      const isRep = s.landmark.has(at.id);
-      let include = false; let priority = 5;
-      if (isFav && zoom >= 16) { include = true; priority = 3; }
-      if (isRep && showRep) { include = true; priority = Math.min(priority, 4); }
-      if (showAll) { include = true; priority = Math.min(priority, 5); }
-      if (include) {
-        out.push({
-          key: 'at:' + at.id, kind: 'attr', latlng: at.coordinates,
-          text: mainText(at), sub: subText(at), priority,
-        });
+    if (!hideAttrLabels) {
+      for (const at of s.attractions) {
+        if (!at.coordinates) continue;
+        if ((at.operatingStatus || 'operating') !== 'operating') continue;
+        if (hideNonFavAttr && !s.favIds.has(at.id)) continue;
+        const isFav = s.favIds.has(at.id);
+        const isRep = s.landmark.has(at.id);
+        let include = false; let priority = 5;
+        if (attractionsOnly) {
+          // Attractions tab: show Korean attraction labels (rep at 16+, all at 17+).
+          if (isRep && showRep) { include = true; priority = 4; }
+          if (showAll || zoom >= 16) { include = true; priority = Math.min(priority, 5); }
+        } else {
+          if (isFav && zoom >= 16) { include = true; priority = 3; }
+          if (isRep && showRep) { include = true; priority = Math.min(priority, 4); }
+          if (showAll) { include = true; priority = Math.min(priority, 5); }
+        }
+        if (include) {
+          out.push({
+            key: 'at:' + at.id, kind: 'attr', latlng: at.coordinates,
+            text: mainText(at), sub: subText(at), priority,
+          });
+        }
       }
     }
-    // Selected POI (attraction or facility) always shown, highest priority.
+    // Selected POI (attraction or facility) always shown, highest priority —
+    // but not when the active category hides that kind.
     if (s.selectedId) {
       const sel = s.attractions.find((a) => a.id === s.selectedId)
         || s.facilities.find((f) => f.id === s.selectedId);
       if (sel && sel.coordinates) {
-        out.push({
-          key: (sel.type === 'attraction' ? 'at:' : 'fac:') + sel.id,
-          kind: sel.type === 'attraction' ? 'attr' : 'facility',
-          latlng: sel.coordinates,
-          text: mainText(sel),
-          sub: subText(sel),
-          priority: 1, selected: true,
-        });
+        const isAttr = sel.type === 'attraction';
+        const allowed = attractionsOnly ? isAttr
+          : cat === 'restrooms' ? (sel.type === 'restroom' || sel.type === 'babyCare')
+            : cat === 'favorites' ? s.favIds.has(sel.id)
+              : true;
+        if (allowed) {
+          out.push({
+            key: (isAttr ? 'at:' : 'fac:') + sel.id,
+            kind: isAttr ? 'attr' : 'facility',
+            latlng: sel.coordinates,
+            text: mainText(sel),
+            sub: subText(sel),
+            priority: 1, selected: true,
+          });
+        }
       }
     }
     // de-dup by key, keep the lowest-priority (most important) instance

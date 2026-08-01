@@ -8,6 +8,7 @@ import {
 import {
   matchText, attractionMatchesFilters, facilityMatchesFilters,
   facilityVisible, facilityBandCounts, withDistance, sortByDistance,
+  isRestroomTabFacility,
 } from './search.js';
 import {
   routeToPoi, canOfferWalkRoute, investigateRoute,
@@ -67,14 +68,68 @@ function cacheEls() {
 function parkMeta() { return PARKS[state.park]; }
 
 function includeLowTrust() { return store.getSettings().includeEstimated; }
+function includePregate() { return !!store.getSettings().includePregate; }
 
-function visibleFacilities() {
-  return getFacilities(state.park).filter((f) => facilityVisible(f, includeLowTrust(), state.park));
+function facilityVisibilityOpts() {
+  return { includePregate: includePregate() };
 }
 
-// POIs shown on the map: all attractions + visible facilities.
+function visibleFacilities({ restroomTabOnly = false } = {}) {
+  return getFacilities(state.park).filter((f) => {
+    if (restroomTabOnly && !isRestroomTabFacility(f)) return false;
+    return facilityVisible(f, includeLowTrust(), state.park, facilityVisibilityOpts());
+  });
+}
+
+/** Active map category from bottom nav (detail/search inherit prevTab). */
+function mapCategory() {
+  if (state.tab === 'map' || state.tab === 'settings') return 'map';
+  if (state.tab === 'attractions' || state.tab === 'restrooms' || state.tab === 'favorites') return state.tab;
+  if (state.tab === 'detail' || state.tab === 'search' || state.tab === 'filter') {
+    if (state.prevTab === 'attractions' || state.prevTab === 'restrooms' || state.prevTab === 'favorites') {
+      return state.prevTab;
+    }
+  }
+  return 'map';
+}
+
+function poiMatchesCategory(poi, category = mapCategory()) {
+  if (!poi) return false;
+  if (category === 'map') return true;
+  if (category === 'attractions') return poi.type === 'attraction';
+  if (category === 'restrooms') return isRestroomTabFacility(poi);
+  if (category === 'favorites') return store.isFavorite(poi.id);
+  return true;
+}
+
+// POIs shown on the map: filtered by bottom-nav category.
 function mapPois() {
+  const cat = mapCategory();
+  if (cat === 'attractions') return getAttractions(state.park);
+  if (cat === 'restrooms') {
+    const ff = { ...getFilters().facility };
+    if (ff.inGateOnly == null) ff.inGateOnly = true;
+    return visibleFacilities({ restroomTabOnly: true }).filter((p) => facilityMatchesFilters(p, ff));
+  }
+  if (cat === 'favorites') {
+    const fav = new Set(store.getFavorites());
+    return getPois(state.park).filter((p) => fav.has(p.id) && p.coordinates
+      && (p.type === 'attraction' || facilityVisible(p, includeLowTrust(), state.park, facilityVisibilityOpts())));
+  }
+  // map / settings: all app-managed markers
   return [...getAttractions(state.park), ...visibleFacilities()];
+}
+
+function clearSelectionIfWrongCategory(category = mapCategory()) {
+  if (!state.selectedId) return;
+  const poi = getPoiById(state.park, state.selectedId);
+  if (poiMatchesCategory(poi, category)) return;
+  state.selectedId = null;
+  map.highlight(null);
+  if (state.tab === 'detail') {
+    // Drop detail for POI that no longer belongs to the active category.
+    state.tab = category === 'map' ? 'map' : category;
+  }
 }
 
 function distanceTo(poi) {
@@ -150,6 +205,7 @@ function syncLabelOptions() {
     selectedId: state.selectedId,
     favIds: new Set(store.getFavorites()),
     mapLabelMode: store.getSettings().mapLabelMode || 'ko',
+    category: mapCategory(),
   });
 }
 
@@ -180,36 +236,34 @@ function attractionFilterBar(f) {
 }
 
 function facilityFilterBar(f) {
+  const inGate = f.inGateOnly !== false; // default: paid area only
   return `<div class="chips" role="group" aria-label="화장실 필터">
     ${chip('nearest', '가까운 순', f.nearest)}
     ${chip('generalOnly', '일반화장실', f.generalOnly)}
     ${chip('accessible', '다기능화장실', f.accessible)}
-    ${chip('nursing', '수유실', f.nursing)}
-    ${chip('babyCare', '베이비케어룸', f.babyCare)}
-    ${chip('inGateOnly', '게이트 안쪽', f.inGateOnly)}
+    ${chip('babyCare', '베이비케어·수유실', f.babyCare)}
+    ${chip('inGateOnly', '파크 안쪽만', inGate)}
+    ${chip('includePregate', '입구 밖 포함', includePregate())}
+    ${chip('includeEstimated', '낮은 신뢰도 위치 포함', includeLowTrust())}
     ${chip('highOnly', 'High 신뢰도만', f.highOnly)}
-    ${chip('includeEstimated', '낮은 신뢰도 위치까지 표시', includeLowTrust())}
   </div>`;
 }
 
 function facilityCountSummary() {
-  const all = getFacilities(state.park).filter((f) => f.coordinateStatus !== 'unknown' && f.coordinates);
-  const bands = facilityBandCounts(all);
-  const shown = visibleFacilities().length;
-  const baseCount = state.park === 'TDS'
-    ? bands.high + bands.medium
-    : bands.high;
-  const lowCount = bands.low + (state.park === 'TDL' ? bands.medium : 0);
-  if (state.park === 'TDS') {
-    return `<div class="facility-count notice">
-      <p><strong>화장실 ${shown}곳 표시 중</strong></p>
-      <p class="small">기본(Medium 이상) ${baseCount}곳 · 대략적인 위치 ${bands.low}곳${includeLowTrust() ? ' 포함' : ' (숨김)'}</p>
-      <p class="small muted">낮은 신뢰도 위치까지 표시하면 ${all.length}곳까지 볼 수 있어요.</p>
-    </div>`;
-  }
+  const restroomsAll = getFacilities(state.park).filter((f) => f.type === 'restroom');
+  const babyAll = getFacilities(state.park).filter((f) => f.type === 'babyCare');
+  const aidAll = getFacilities(state.park).filter((f) => f.type === 'firstAid' || f.type === 'emergencyFacility');
+  const restroomsKnown = restroomsAll.filter((f) => f.coordinateStatus !== 'unknown');
+  const restroomsUnknown = restroomsAll.filter((f) => f.coordinateStatus === 'unknown');
+  const shownRestrooms = visibleFacilities({ restroomTabOnly: true }).filter((f) => f.type === 'restroom');
+  const shownBaby = visibleFacilities({ restroomTabOnly: true }).filter((f) => f.type === 'babyCare');
+  const bands = facilityBandCounts(restroomsKnown);
+  const pdfConfirmed = restroomsAll.filter((f) => f.pdfVerified).length;
   return `<div class="facility-count notice">
-      <p><strong>화장실 ${shown}곳 표시 중</strong></p>
-      <p class="small">확인된 위치(High) ${bands.high}곳 · 대략적인 위치 ${lowCount}곳${includeLowTrust() ? ' 포함' : ' (숨김)'}</p>
+      <p><strong>화장실 ${shownRestrooms.length}곳</strong> · 베이비케어·수유실 ${shownBaby.length}곳</p>
+      <p class="small">응급시설(중앙구호실 등) ${aidAll.length}곳 — 화장실 탭·개수에서 제외, 지도 탭에서 표시</p>
+      <p class="small">공식 지도 확인 화장실 ${pdfConfirmed}곳 · 현재 지도 표시 ${shownRestrooms.length}곳 · 위치 확인 중 ${restroomsUnknown.length}곳</p>
+      <p class="small muted">High ${bands.high} · Medium ${bands.medium} · Low ${bands.low}${includePregate() ? '' : ' · 입구 밖은 기본 숨김'}</p>
     </div>`;
 }
 
@@ -258,19 +312,33 @@ function renderAttractions() {
 }
 
 function renderRestrooms() {
-  const f = getFilters().facility;
-  let items = visibleFacilities().filter((p) => matchText(p, state.query) && facilityMatchesFilters(p, f));
+  const f = { ...getFilters().facility };
+  // Default: park inside only (unless user turned the chip off).
+  if (f.inGateOnly == null) f.inGateOnly = true;
+  let items = visibleFacilities({ restroomTabOnly: true })
+    .filter((p) => matchText(p, state.query) && facilityMatchesFilters(p, f));
+  // Unknown restrooms: list-only with “위치 확인 중”
+  const unknown = getFacilities(state.park)
+    .filter((p) => p.type === 'restroom' && p.coordinateStatus === 'unknown')
+    .filter((p) => matchText(p, state.query) && facilityMatchesFilters(p, { ...f, inGateOnly: false }));
   items = withDistance(items, state.user && state.user.coords);
   if (f.nearest) items = sortByDistance(items);
-  els.sheetTitle.textContent = `화장실·시설 (${items.length})`;
+  const wc = items.filter((p) => p.type === 'restroom').length;
+  const baby = items.filter((p) => p.type === 'babyCare').length;
+  els.sheetTitle.textContent = `화장실 (${wc}) · 베이비케어 (${baby})`;
   let body = facilityCountSummary() + facilityFilterBar(f);
-  if (state.park === 'TDS') {
-    body += `<div class="notice"><p>TDS는 공식 지도 기반 <strong>Medium 추정 위치</strong>를 기본으로 표시합니다. 「낮은 신뢰도 위치까지 표시」를 켜면 Low(대략적인 위치)도 함께 보입니다.</p></div>`;
-  }
+  body += `<div class="notice"><p>중앙구호실·AED는 화장실이 아니어서 이 목록에 넣지 않습니다. 지도 탭에서 확인할 수 있어요.</p></div>`;
   body += ui.listHtml(items, {
     isFav: (id) => store.isFavorite(id),
-    emptyMsg: '표시할 화장실·시설이 없습니다. 필터를 조정하거나 「낮은 신뢰도 위치까지 표시」를 켜 보세요.',
+    emptyMsg: '표시할 화장실·베이비케어가 없습니다. 필터를 조정해 보세요.',
   });
+  if (unknown.length) {
+    body += `<h3 class="sheet-h3">위치 확인 중 (${unknown.length})</h3>`;
+    body += ui.listHtml(unknown.map((p) => ({ ...p, nameNote: (p.nameNote ? `${p.nameNote} · ` : '') + '좌표 확인 중' })), {
+      isFav: (id) => store.isFavorite(id),
+      emptyMsg: '',
+    });
+  }
   els.sheetBody.innerHTML = body;
 }
 
@@ -344,6 +412,11 @@ function renderSettings() {
       <span>낮은 신뢰도 위치까지 표시</span>
     </label>
     <p class="muted small">켜면 Low(대략적인 위치)도 지도·목록에 포함됩니다. TDL의 Medium 추정(있을 경우)도 함께 표시됩니다.</p>
+    <label class="switch-row">
+      <input type="checkbox" id="set-pregate" ${s.includePregate ? 'checked' : ''} />
+      <span>입구 밖 화장실 포함</span>
+    </label>
+    <p class="muted small">스테이션·버스터미널·택시터미널·프리게이트 광장 화장실을 표시합니다. 호텔 전용 시설은 기본 숨김입니다.</p>
     <button class="btn" id="map-reset" type="button">지도 초기화</button>
     <p class="muted small">선택한 파크 전체가 보기 좋은 범위로 돌아옵니다. 경로·선택도 함께 지워집니다.</p>
 
@@ -370,8 +443,8 @@ function renderSettings() {
 
     <h3 class="sheet-h3">데이터 현황</h3>
     <div class="notice">
-      <p><strong>TDL</strong> 화장실 9곳 지도 기반 추정(대략 5~10m), 추가 검증 4곳, 미확인 1곳(비표시). 중앙구호실 1곳.</p>
-      <p><strong>TDS</strong> 화장실 10곳·베이비케어 2곳·중앙구호실 1곳 — 공식 PDF 기반 추정(Google POI 미확인). 기본은 Medium 이상 표시, Low는 「낮은 신뢰도 위치까지 표시」로 켭니다.</p>
+      <p><strong>TDL</strong> 화장실 25곳(유료 19·프리게이트 5·호텔 1, unknown 1 포함). High 9·Medium 7·Low 8·Unknown 1. 베이비케어 1·중앙구호실 1(화장실 수 제외).</p>
+      <p><strong>TDS</strong> 화장실 18곳(유료 15·프리게이트 2·호텔 1). Medium 11·Low 7. 베이비케어 2·중앙구호실 1(화장실 수 제외). 기본은 Medium 이상, Low·입구 밖은 필터로 켭니다.</p>
       <p><strong>키 기준</strong> 공식 FAQ(2026-08-01) 기준으로 운영 어트랙션 전수 반영. 레이징 스피리츠는 117~195cm.</p>
       <p><strong>보행 경로</strong> 상세 보행 경로는 검증 중입니다. 현재는 목적지 방향과 직선거리만 안내합니다. 현재 위치가 없거나 파크 밖이면 정문·지도에서 출발점을 고를 수 있습니다.</p>
       <p><strong>운영 종료·장기 휴장</strong> 스페이스 마운틴·버즈 라이트이어(TDL), 머메이드 라군 시어터(TDS)는 기본 목록·지도에서 제외했습니다.</p>
@@ -412,8 +485,21 @@ function renderDetail(id) {
 
 function renderSearch() {
   const q = state.query;
-  const atts = getAllAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, filterCtx()));
-  const facs = visibleFacilities().filter((p) => matchText(p, q));
+  const cat = mapCategory();
+  let atts = [];
+  let facs = [];
+  if (cat === 'attractions') {
+    atts = getAllAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, filterCtx()));
+  } else if (cat === 'restrooms') {
+    facs = visibleFacilities({ restroomTabOnly: true }).filter((p) => matchText(p, q) && facilityMatchesFilters(p, getFilters().facility));
+  } else if (cat === 'favorites') {
+    const fav = new Set(store.getFavorites());
+    atts = getAllAttractions(state.park).filter((p) => fav.has(p.id) && matchText(p, q));
+    facs = getFacilities(state.park).filter((p) => fav.has(p.id) && matchText(p, q));
+  } else {
+    atts = getAllAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, filterCtx()));
+    facs = visibleFacilities().filter((p) => matchText(p, q));
+  }
   let items = withDistance([...atts, ...facs], state.user && state.user.coords);
   if (getFilters().attraction.nearest || getFilters().facility.nearest) items = sortByDistance(items);
   items = annotateClosure(items);
@@ -449,6 +535,7 @@ function renderSheet() {
 function openTab(tab) {
   if (['attractions', 'restrooms', 'favorites', 'settings'].includes(tab)) state.prevTab = tab;
   state.tab = tab;
+  clearSelectionIfWrongCategory(mapCategory());
   if (tab === 'map') {
     closeSheet();
   } else {
@@ -456,6 +543,9 @@ function openTab(tab) {
     els.sheet.setAttribute('aria-hidden', 'false');
     renderSheet();
   }
+  renderMap();
+  syncLabelSources();
+  syncLabelOptions();
   syncNav();
 }
 
@@ -463,6 +553,9 @@ function closeSheet() {
   els.sheet.classList.remove('open');
   els.sheet.setAttribute('aria-hidden', 'true');
   state.tab = 'map';
+  clearSelectionIfWrongCategory('map');
+  renderMap();
+  syncLabelOptions();
   syncNav();
 }
 
@@ -521,10 +614,13 @@ function setPark(p) {
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   map.setPark(parkMeta());
+  // Keep current category/tab; re-render that park's data.
+  clearSelectionIfWrongCategory(mapCategory());
   renderMap();
   syncLabelSources();
   syncLabelOptions();
-  if (state.tab !== 'map') renderSheet();
+  if (state.tab === 'detail') openTab(state.prevTab || 'map');
+  else if (state.tab !== 'map') renderSheet();
   toast(`${PARKS[p].nameKo}로 전환했습니다`);
 }
 
@@ -918,10 +1014,31 @@ function toggleFacilityFilter(key) {
   if (key === 'includeEstimated') {
     store.setSettings({ includeEstimated: !includeLowTrust() });
     renderMap();
+    syncLabelOptions();
+    return;
+  }
+  if (key === 'includePregate') {
+    const on = !includePregate();
+    store.setSettings({ includePregate: on });
+    if (on) {
+      const f = getFilters().facility;
+      f.inGateOnly = false;
+      setFacilityFilters(f);
+    }
+    renderMap();
+    syncLabelOptions();
     return;
   }
   const f = getFilters().facility;
-  f[key] = !f[key];
+  if (key === 'inGateOnly') {
+    // Default true when unset; toggle off → show outside (requires includePregate).
+    const currentlyOn = f.inGateOnly !== false;
+    f.inGateOnly = !currentlyOn;
+    if (!f.inGateOnly) store.setSettings({ includePregate: true });
+    else store.setSettings({ includePregate: false });
+  } else {
+    f[key] = !f[key];
+  }
   setFacilityFilters(f);
 }
 
@@ -1065,6 +1182,15 @@ function bindEvents() {
   els.sheetBody.addEventListener('change', (e) => {
     if (e.target.id === 'set-estimated') {
       store.setSettings({ includeEstimated: e.target.checked });
+      renderMap();
+      if (state.tab === 'restrooms') renderRestrooms();
+    }
+    if (e.target.id === 'set-pregate') {
+      const on = e.target.checked;
+      store.setSettings({ includePregate: on });
+      const f = getFilters().facility;
+      f.inGateOnly = !on;
+      setFacilityFilters(f);
       renderMap();
       if (state.tab === 'restrooms') renderRestrooms();
     }

@@ -69,12 +69,14 @@ for (const parkId of PARK_IDS) {
       warn(`${tag}: coordinateVerified 는 정책상 false 여야 함 (현재 ${p.coordinateVerified})`);
     }
 
-    if (status === 'high_estimated' && !p.evidence && p.type !== 'attraction') {
-      err(`${tag}: high_estimated 인데 evidence 없음`);
+    if ((status === 'high_estimated' || status === 'medium_estimated') && !p.evidence && p.type !== 'attraction') {
+      err(`${tag}: ${status} 인데 evidence 없음`);
     }
 
     if (FACILITY_TYPES.has(p.type)) {
-      if (p.insidePaidArea === false && p.generalGuestAccessible === false) {
+      if (p.insidePaidArea == null) err(`${tag}: insidePaidArea 값 누락`);
+      if (p.generalGuestAccessible == null) err(`${tag}: generalGuestAccessible 값 누락`);
+      if (p.insidePaidArea === false && p.generalGuestAccessible === false && !p.hotelOnly) {
         warn(`${tag}: insidePaidArea=false & generalGuestAccessible=false (접근성 확인 필요)`);
       }
       if (p.type === 'restroom' && (p.name || '').match(/구호|의무|AED|응급/)) {
@@ -83,8 +85,18 @@ for (const parkId of PARK_IDS) {
       if ((p.type === 'firstAid' || p.type === 'emergencyFacility') && p.generalRestroom === true) {
         err(`${tag}: 응급시설 타입인데 generalRestroom=true (유형 혼동)`);
       }
+      if ((p.type === 'firstAid' || p.type === 'emergencyFacility') && p.type === 'restroom') {
+        err(`${tag}: 중앙구호실을 restroom으로 분류하면 안 됨`);
+      }
+      if (p.type === 'babyCare' && p.generalRestroom === true) {
+        err(`${tag}: babyCare 인데 generalRestroom=true (화장실 수 중복 합산 위험)`);
+      }
       if (parkId === 'TDS' && p.pdfVerified !== true && status !== 'unknown') {
         warn(`${tag}: TDS 시설인데 pdfVerified !== true`);
+      }
+      // Prefgate toilets must not be treated as default paid-area display.
+      if (p.type === 'restroom' && p.insidePaidArea === false && p.generalGuestAccessible === true && p.pregate !== true && !p.hotelOnly) {
+        warn(`${tag}: 파크 밖 화장실인데 pregate 플래그 없음`);
       }
     }
 

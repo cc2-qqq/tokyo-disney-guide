@@ -36,6 +36,7 @@ const DEFAULT_CHILDREN = [
 
 const DEFAULT_SETTINGS = {
   includeEstimated: false, // 낮은 신뢰도(Low, 및 TDL Medium)까지 표시
+  includePregate: false, // 입구 밖(프리게이트) 화장실 포함
   theme: 'auto', // 'auto' | 'light' | 'dark'
   // Vector basemap label language: Korean-first (keeps JP as data / high-zoom aux).
   mapLabelMode: 'ko', // 'ko' | 'ko_ja' | 'ja'
