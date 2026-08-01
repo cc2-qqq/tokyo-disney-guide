@@ -61,13 +61,19 @@ export function attractionMatchesFilters(poi, filters, ctx) {
   return true;
 }
 
+/** Restroom-tab facility kinds (excludes firstAid / AED / other). */
+export function isRestroomTabFacility(poi) {
+  if (!poi) return false;
+  return poi.type === 'restroom' || poi.type === 'babyCare';
+}
+
 // Facility (restroom/emergency/babyCare) filters.
 export function facilityMatchesFilters(poi, filters) {
   const f = filters || {};
-  if (f.generalOnly && !poi.generalRestroom) return false;
-  if (f.accessible && !poi.accessibleRestroom) return false;
+  if (f.generalOnly && !(poi.type === 'restroom' && poi.generalRestroom)) return false;
+  if (f.accessible && !(poi.type === 'restroom' && poi.accessibleRestroom)) return false;
   if (f.nursing && !poi.nursingRoom) return false;
-  if (f.babyCare && !poi.babyCare) return false;
+  if (f.babyCare && !(poi.type === 'babyCare' || poi.babyCare)) return false;
   if (f.inGateOnly && poi.insidePaidArea !== true) return false;
   if (f.highOnly && poi.coordinateStatus !== 'high_estimated') return false;
   return true;
@@ -81,9 +87,13 @@ export function facilityMatchesFilters(poi, filters) {
  *  - low: only when includeLow
  * includeLow = settings "낮은 신뢰도 위치까지 표시"
  */
-export function facilityVisible(poi, includeLow, parkId) {
+export function facilityVisible(poi, includeLow, parkId, { includePregate = false } = {}) {
   const st = poi.coordinateStatus;
   if (st === 'unknown') return false;
+  // Hotel-only / non-guest facilities stay hidden unless explicitly handled later.
+  if (poi.generalGuestAccessible === false) return false;
+  // Default: paid-area only; opt-in for station/bus/taxi pregate toilets.
+  if (poi.insidePaidArea === false && !includePregate) return false;
   if (st === 'high_estimated') return true;
   if (st === 'medium_estimated') {
     if (parkId === 'TDS') return true;

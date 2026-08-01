@@ -42,6 +42,7 @@ export const PARKS = {
       { id: 'fantasyland', nameKo: '판타지랜드', nameEn: 'Fantasyland', labelCenter: [35.63105, 139.88060] },
       { id: 'toontown', nameKo: '툰타운', nameEn: 'Toontown', labelCenter: [35.63015, 139.87960] },
       { id: 'tomorrowland', nameKo: '투머로우랜드', nameEn: 'Tomorrowland', labelCenter: [35.63205, 139.87895] },
+      { id: 'pregate', nameKo: '입구 밖·프리게이트', nameEn: 'Pregate / Outside', labelCenter: [35.63490, 139.87940] },
     ],
   },
   TDS: {
@@ -78,6 +79,7 @@ export const PARKS = {
       { id: 'mermaid-lagoon', nameKo: '머메이드 라군', nameEn: 'Mermaid Lagoon', labelCenter: [35.62520, 139.88600] },
       { id: 'mysterious-island', nameKo: '미스테리어스 아일랜드', nameEn: 'Mysterious Island', labelCenter: [35.62670, 139.88550] },
       { id: 'fantasy-springs', nameKo: '판타지 스프링스', nameEn: 'Fantasy Springs', labelCenter: [35.62920, 139.88850] },
+      { id: 'pregate', nameKo: '입구 밖·프리게이트', nameEn: 'Pregate / Outside', labelCenter: [35.62630, 139.88180] },
     ],
   },
 };
