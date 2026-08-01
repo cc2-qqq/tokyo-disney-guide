@@ -348,15 +348,30 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 .entrance-wrap { background: none; border: 0; }
 .entrance-marker {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  min-width: 88px; padding: 4px 8px; border-radius: 12px;
+  padding: 3px 7px; border-radius: 10px;
   background: #c45c26; color: #fff; border: 2px solid #fff;
-  box-shadow: 0 2px 10px rgba(0,0,0,.35); line-height: 1.15; text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.28); line-height: 1.12; text-align: center;
 }
-.entrance-marker.is-main { background: #b33d12; min-width: 100px; }
+.entrance-marker.is-main {
+  background: #9e2f0a; min-width: 108px; padding: 5px 10px; border-radius: 12px;
+  box-shadow: 0 3px 12px rgba(0,0,0,.38);
+}
+.entrance-marker.is-pregate {
+  background: #c45c26; min-width: 88px; opacity: .96;
+}
+.entrance-marker.is-station {
+  background: #8a6a55; min-width: 70px; padding: 2px 6px; border-width: 1.5px;
+  box-shadow: 0 1px 5px rgba(0,0,0,.22); opacity: .9;
+}
 .entrance-marker.is-selected { outline: 3px solid #0b6bcb; outline-offset: 2px; }
+.entrance-marker.is-main .entrance-glyph { font-size: 14px; }
+.entrance-marker.is-main .entrance-label { font-size: 12px; }
+.entrance-marker.is-pregate .entrance-glyph { font-size: 12px; }
+.entrance-marker.is-pregate .entrance-label { font-size: 10px; }
+.entrance-marker.is-station .entrance-glyph { font-size: 10px; }
+.entrance-marker.is-station .entrance-label { font-size: 9px; font-weight: 700; max-width: 8em; }
 .entrance-glyph { font-size: 13px; font-weight: 900; }
-.entrance-label { font-size: 11px; font-weight: 800; max-width: 9.5em; overflow-wrap: anywhere; }
-.entrance-sub { font-size: 10px; font-weight: 700; opacity: .92; }
+.entrance-label { font-size: 11px; font-weight: 800; max-width: 10em; overflow-wrap: anywhere; }
 .li-entrance { background: #c45c26; font-weight: 900; }
 .boundary-label-wrap { background: none; border: 0; }
 .boundary-label {

@@ -236,7 +236,8 @@ for (const parkId of PARK_IDS) {
   }
   const b = getParkBoundaries(parkId);
   if (!b) { err(`[${parkId}] 경계 데이터 없음`); continue; }
-  for (const key of ['parkOuterBoundary', 'paidAreaBoundary', 'entranceAreaBoundary']) {
+  // parkOutline + entranceZone required; paidAreaOutline optional.
+  for (const key of ['parkOutline', 'entranceZone']) {
     const ring = b[key] && b[key].ring;
     if (!Array.isArray(ring) || ring.length < 3) err(`[${parkId}] ${key} 다각형 부족`);
     else {
@@ -246,6 +247,17 @@ for (const parkId of PARK_IDS) {
           break;
         }
       }
+    }
+  }
+  if (b.paidAreaOutline) {
+    const ring = b.paidAreaOutline.ring;
+    if (!Array.isArray(ring) || ring.length < 3) err(`[${parkId}] paidAreaOutline 다각형 부족`);
+  }
+  // Guard: parkOutline must stay inside map maxBounds (not equal to it).
+  const mb = PARKS[parkId].maxBounds;
+  if (mb && b.parkOutline && Array.isArray(b.parkOutline.ring)) {
+    for (const c of b.parkOutline.ring) {
+      if (!inBounds(c, mb)) warn(`[${parkId}] parkOutline 점이 maxBounds 밖: ${c}`);
     }
   }
 }

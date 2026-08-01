@@ -285,20 +285,24 @@ export function createMapController(elId) {
 
   function entranceIcon(ent, selected) {
     const kind = ent.entranceKind || 'main_entrance';
-    const isMain = kind === 'main_entrance';
-    const sub = kind === 'pre_gate' ? '프리게이트'
-      : kind === 'station_side' ? '스테이션'
-        : '';
-    const html = `<div class="entrance-marker ${isMain ? 'is-main' : 'is-aux'} ${selected ? 'is-selected' : ''}" aria-hidden="true">
+    const tier = kind === 'main_entrance' ? 'main'
+      : kind === 'pre_gate' ? 'pregate'
+        : 'station';
+    const html = `<div class="entrance-marker is-${tier} ${selected ? 'is-selected' : ''}" aria-hidden="true">
       <span class="entrance-glyph">入</span>
       <span class="entrance-label">${escapeHtml(ent.nameKo || '입구')}</span>
-      ${sub ? `<span class="entrance-sub">${escapeHtml(sub)}</span>` : ''}
     </div>`;
+    const sizes = {
+      main: { size: [118, 42], anchor: [59, 21] },
+      pregate: { size: [96, 34], anchor: [48, 17] },
+      station: { size: [78, 28], anchor: [39, 14] },
+    };
+    const s = sizes[tier] || sizes.station;
     return L.divIcon({
       html,
       className: 'entrance-wrap',
-      iconSize: isMain ? [108, 44] : [96, 40],
-      iconAnchor: isMain ? [54, 22] : [48, 20],
+      iconSize: s.size,
+      iconAnchor: s.anchor,
     });
   }
 
@@ -307,12 +311,13 @@ export function createMapController(elId) {
     entranceGroup.clearLayers();
     entranceMarkers = new Map();
     if (!show) return;
+    const zByKind = { main_entrance: 720, pre_gate: 680, station_side: 640 };
     for (const ent of entrances || []) {
       if (!ent.coordinates) continue;
       const m = L.marker(ent.coordinates, {
         icon: entranceIcon(ent, ent.id === selectedId),
         keyboard: true,
-        zIndexOffset: ent.entranceKind === 'main_entrance' ? 700 : 650,
+        zIndexOffset: zByKind[ent.entranceKind] || 640,
         title: ent.nameKo || '입구',
         alt: ent.nameKo || '입구',
       });
@@ -374,19 +379,36 @@ export function createMapController(elId) {
       }
     }
 
-    // zoom 15-: entrance markers only (caller). Boundaries from 16+.
-    addPoly(currentBoundaries.parkOuterBoundary, {
-      color: '#5b6b7c', weight: 1.5, dashArray: null, fill: false, opacity: 0.7,
-    }, '파크 경계(안내용)', 16);
+    // Primary silhouette: parkOutline (line-first, very light fill).
+    // Fall back to legacy keys if an old payload is still cached.
+    const parkOutline = currentBoundaries.parkOutline
+      || currentBoundaries.parkOuterBoundary;
+    const entranceZone = currentBoundaries.entranceZone
+      || currentBoundaries.entranceAreaBoundary;
+    // paidAreaOutline stays in data (optional inset) but is not drawn —
+    // drawing it stacked with parkOutline made the map look messy.
 
-    addPoly(currentBoundaries.paidAreaBoundary, {
-      color: '#0b6bcb', weight: 2.5, fillColor: '#0b6bcb', fillOpacity: 0.06, opacity: 0.9,
-    }, '유료구역', 16);
+    const thin = dim; // layerMode overlays → keep outline readable but quiet
+    addPoly(parkOutline, {
+      color: '#3d5a73',
+      weight: thin ? 1.25 : 2,
+      fillColor: '#3d5a73',
+      fillOpacity: thin ? 0.02 : 0.045,
+      opacity: thin ? 0.55 : 0.88,
+      lineJoin: 'round',
+      lineCap: 'round',
+    }, '파크 윤곽', 16);
 
+    // Tiny pregate patch only.
     if (boundaryOpts.showPregateBoundary) {
-      addPoly(currentBoundaries.entranceAreaBoundary, {
-        color: '#c45c26', weight: 2, dashArray: '6 5', fillColor: '#c45c26', fillOpacity: 0.05, opacity: 0.85,
-      }, '입구/프리게이트', 17);
+      addPoly(entranceZone, {
+        color: '#c45c26',
+        weight: 1.5,
+        dashArray: null,
+        fillColor: '#c45c26',
+        fillOpacity: thin ? 0.06 : 0.12,
+        opacity: thin ? 0.45 : 0.75,
+      }, '입구 앞', 17);
     }
   }
 
