@@ -43,6 +43,10 @@ const DEFAULT_SETTINGS = {
   // Vector basemap label language: Korean-first (keeps JP as data / high-zoom aux).
   mapLabelMode: 'ko', // 'ko' | 'ko_ja' | 'ja'
   showFamilyRideBadge: true, // 목록·마커 가족 탑승 배지
+  showEntranceMarkers: true, // 입구 마커
+  showParkBoundaries: true, // 파크·유료구역 경계
+  showPregateBoundary: true, // 프리게이트 영역 경계
+  showBoundaryLabels: true, // 경계 라벨
 };
 
 const PRIORITIES = new Set(['must', 'maybe', 'hold']);

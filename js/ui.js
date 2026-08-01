@@ -16,7 +16,7 @@ export function esc(s) {
 
 const TYPE_MARK = {
   attraction: '\u{1F3A0}', restroom: 'WC', firstAid: '\u271A',
-  emergencyFacility: '\u271A', babyCare: '\u{1F476}',
+  emergencyFacility: '\u271A', babyCare: '\u{1F476}', entrance: '入',
 };
 
 function badge(poi) {
@@ -260,6 +260,51 @@ export function attractionDetail(poi, { children, isFav, inVisit, distance, user
       ${actionRow(poi, { isFav, inVisit }, true, !!canWalkRoute)}
       ${poi.notes ? `<p class="detail-note">${esc(poi.notes)}</p>` : ''}
       <p class="detail-note detail-warn">\u2139\uFE0F ${esc(OFFICIAL_APP_NOTE)}</p>
+    </div>`;
+}
+
+const ENTRANCE_KIND_LABEL = {
+  main_entrance: '주 출입구',
+  pre_gate: '프리게이트',
+  station_side: '스테이션 쪽 진입',
+};
+
+export function entranceDetail(poi, { parkName, isFav, inVisit, distance, direction, routeInfo }) {
+  const kind = ENTRANCE_KIND_LABEL[poi.entranceKind] || '입구';
+  const zone = poi.insidePaidArea === true ? '입구 안쪽(유료구역)' : '입구 바깥(프리게이트)';
+  const distLine = distance != null
+    ? `<div class="dg-k">현재 위치에서</div><div class="dg-v">직선거리 ${esc(formatDistance(distance))}</div>`
+    : '';
+  return `
+    <div class="detail">
+      <div class="detail-head">
+        <span class="li-mark li-entrance" aria-hidden="true">入</span>
+        <div>
+          <h2 class="detail-title">${esc(poi.nameKo || poi.name)}</h2>
+          <p class="detail-sub">${esc(poi.nameEn || '')}</p>
+        </div>
+      </div>
+      <div class="detail-tags">
+        <span class="tag">${esc(parkName || poi.park)}</span>
+        <span class="tag">${esc(kind)}</span>
+        <span class="tag">${esc(zone)}</span>
+      </div>
+      <div class="detail-grid">
+        <div class="dg-k">구분</div><div class="dg-v">${esc(kind)}</div>
+        <div class="dg-k">위치</div><div class="dg-v">${esc(zone)}</div>
+        ${distLine}
+      </div>
+      ${routeCard(routeInfo, poi.id)}
+      ${directionCard(direction)}
+      <div class="detail-actions">
+        <button class="btn btn-primary" data-act="direction" data-poi="${esc(poi.id)}" type="button">방향 보기</button>
+        <button class="btn" data-act="focus-entrance" data-poi="${esc(poi.id)}" type="button">이 입구로 지도 이동</button>
+        <button class="btn" data-act="meetup-set-poi" data-poi="${esc(poi.id)}" type="button">가족 집결지로 지정</button>
+        <button class="btn ${isFav ? 'btn-active' : ''}" data-act="fav" data-poi="${esc(poi.id)}" type="button" aria-pressed="${!!isFav}">즐겨찾기</button>
+        <button class="btn ${inVisit ? 'btn-active' : ''}" data-act="visit" data-poi="${esc(poi.id)}" type="button" aria-pressed="${!!inVisit}">내 방문 목록</button>
+      </div>
+      <p class="detail-note">입구 위치는 지도 안내용입니다. 실제 운영 동선과 입장 대기열은 현장 안내를 따라 주세요.</p>
+      ${poi.notes ? `<p class="detail-note">${esc(poi.notes)}</p>` : ''}
     </div>`;
 }
 

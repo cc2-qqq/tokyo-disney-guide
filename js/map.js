@@ -55,6 +55,17 @@ export function createMapController(elId) {
     mapLabelMode: LABEL_MODES.KO_FIRST,
   };
   let meetupMarker = null;
+  let entranceGroup = null;
+  let boundaryGroup = null;
+  let boundaryLabelGroup = null;
+  let entranceMarkers = new Map();
+  let boundaryOpts = {
+    showParkBoundaries: true,
+    showPregateBoundary: true,
+    showBoundaryLabels: true,
+    dimmed: false,
+  };
+  let currentBoundaries = null;
 
   function applyBasemapStyle(parkId, theme, { fallback = false, labelMode } = {}) {
     currentParkId = parkId || currentParkId;
@@ -147,6 +158,16 @@ export function createMapController(elId) {
 
     markerGroup = L.layerGroup().addTo(map);
 
+    // Boundaries below POI markers; entrances above typical markers.
+    map.createPane('boundaries');
+    const bp = map.getPane('boundaries');
+    bp.style.zIndex = 350;
+    bp.style.pointerEvents = 'none';
+    boundaryGroup = L.layerGroup().addTo(map);
+    boundaryLabelGroup = L.layerGroup().addTo(map);
+
+    entranceGroup = L.layerGroup().addTo(map);
+
     // Dedicated non-interactive pane above markers for Korean text labels.
     map.createPane('labels');
     const lp = map.getPane('labels');
@@ -154,7 +175,7 @@ export function createMapController(elId) {
     lp.style.pointerEvents = 'none';
     labelGroup = L.layerGroup().addTo(map);
 
-    map.on('zoomend moveend', renderLabels);
+    map.on('zoomend moveend', () => { renderLabels(); renderBoundaries(); });
     if (parkMeta.defaultBounds) {
       map.fitBounds(L.latLngBounds(parkMeta.defaultBounds), { animate: false });
     }
@@ -175,6 +196,7 @@ export function createMapController(elId) {
     map.setMaxBounds(parkMeta.maxBounds ? L.latLngBounds(parkMeta.maxBounds) : null);
     applyBasemapStyle(currentParkId, currentTheme);
     resetView(parkMeta);
+    renderBoundaries();
   }
 
   function setBasemapTheme(theme) {
@@ -261,11 +283,124 @@ export function createMapController(elId) {
     }
   }
 
+  function entranceIcon(ent, selected) {
+    const kind = ent.entranceKind || 'main_entrance';
+    const isMain = kind === 'main_entrance';
+    const sub = kind === 'pre_gate' ? '프리게이트'
+      : kind === 'station_side' ? '스테이션'
+        : '';
+    const html = `<div class="entrance-marker ${isMain ? 'is-main' : 'is-aux'} ${selected ? 'is-selected' : ''}" aria-hidden="true">
+      <span class="entrance-glyph">入</span>
+      <span class="entrance-label">${escapeHtml(ent.nameKo || '입구')}</span>
+      ${sub ? `<span class="entrance-sub">${escapeHtml(sub)}</span>` : ''}
+    </div>`;
+    return L.divIcon({
+      html,
+      className: 'entrance-wrap',
+      iconSize: isMain ? [108, 44] : [96, 40],
+      iconAnchor: isMain ? [54, 22] : [48, 20],
+    });
+  }
+
+  function renderEntrances(entrances, { onSelect, selectedId, show = true } = {}) {
+    if (!entranceGroup) return;
+    entranceGroup.clearLayers();
+    entranceMarkers = new Map();
+    if (!show) return;
+    for (const ent of entrances || []) {
+      if (!ent.coordinates) continue;
+      const m = L.marker(ent.coordinates, {
+        icon: entranceIcon(ent, ent.id === selectedId),
+        keyboard: true,
+        zIndexOffset: ent.entranceKind === 'main_entrance' ? 700 : 650,
+        title: ent.nameKo || '입구',
+        alt: ent.nameKo || '입구',
+      });
+      m.on('click', () => onSelect && onSelect(ent.id));
+      m.addTo(entranceGroup);
+      entranceMarkers.set(ent.id, m);
+    }
+  }
+
+  function setBoundaries(boundaries, opts = {}) {
+    currentBoundaries = boundaries || null;
+    boundaryOpts = { ...boundaryOpts, ...opts };
+    renderBoundaries();
+  }
+
+  function ringCentroid(ring) {
+    if (!ring || !ring.length) return null;
+    let lat = 0; let lng = 0;
+    for (const c of ring) { lat += c[0]; lng += c[1]; }
+    return [lat / ring.length, lng / ring.length];
+  }
+
+  function renderBoundaries() {
+    if (!map || !boundaryGroup) return;
+    boundaryGroup.clearLayers();
+    if (boundaryLabelGroup) boundaryLabelGroup.clearLayers();
+    if (!currentBoundaries || !boundaryOpts.showParkBoundaries) return;
+
+    const zoom = map.getZoom();
+    const dim = !!boundaryOpts.dimmed;
+    const opacityMul = dim ? 0.28 : 1;
+
+    function addPoly(spec, style, label, minZoom) {
+      if (!spec || !Array.isArray(spec.ring) || spec.ring.length < 3) return;
+      if (zoom < minZoom) return;
+      const poly = L.polygon(spec.ring, {
+        ...style,
+        pane: 'boundaries',
+        interactive: false,
+        opacity: (style.opacity ?? 1) * opacityMul,
+        fillOpacity: (style.fillOpacity ?? 0) * opacityMul,
+      });
+      poly.addTo(boundaryGroup);
+      if (boundaryOpts.showBoundaryLabels && label && zoom >= minZoom + 1 && !dim) {
+        const c = ringCentroid(spec.ring);
+        if (c) {
+          L.marker(c, {
+            icon: L.divIcon({
+              html: `<span class="boundary-label">${escapeHtml(label)}</span>`,
+              className: 'boundary-label-wrap',
+              iconSize: [0, 0],
+              iconAnchor: [0, 0],
+            }),
+            pane: 'labels',
+            interactive: false,
+            keyboard: false,
+          }).addTo(boundaryLabelGroup);
+        }
+      }
+    }
+
+    // zoom 15-: entrance markers only (caller). Boundaries from 16+.
+    addPoly(currentBoundaries.parkOuterBoundary, {
+      color: '#5b6b7c', weight: 1.5, dashArray: null, fill: false, opacity: 0.7,
+    }, '파크 경계(안내용)', 16);
+
+    addPoly(currentBoundaries.paidAreaBoundary, {
+      color: '#0b6bcb', weight: 2.5, fillColor: '#0b6bcb', fillOpacity: 0.06, opacity: 0.9,
+    }, '유료구역', 16);
+
+    if (boundaryOpts.showPregateBoundary) {
+      addPoly(currentBoundaries.entranceAreaBoundary, {
+        color: '#c45c26', weight: 2, dashArray: '6 5', fillColor: '#c45c26', fillOpacity: 0.05, opacity: 0.85,
+      }, '입구/프리게이트', 17);
+    }
+  }
+
   function highlight(id) {
     for (const [mid, m] of markers) {
       const el = m.getElement();
       if (!el) continue;
       const inner = el.querySelector('.marker');
+      if (inner) inner.classList.toggle('is-selected', mid === id);
+    }
+    for (const [mid, m] of entranceMarkers) {
+      const el = m.getElement();
+      if (!el) continue;
+      const inner = el.querySelector('.entrance-marker');
       if (inner) inner.classList.toggle('is-selected', mid === id);
     }
   }
@@ -649,6 +784,7 @@ export function createMapController(elId) {
     setUserLocation, centerOnUser, showDirection, clearDirection,
     setStartMarker, clearStartMarker, beginPickStart, cancelPickStart,
     setMeetupMarker, clearMeetupMarker,
+    renderEntrances, setBoundaries, renderBoundaries,
     showRoute, clearRoute, showRouteDebug, clearRouteDebug, invalidate,
     setLabelSources, setLabelOptions, renderLabels,
     getMap: () => map,

@@ -1,4 +1,7 @@
-import { PARKS, getPois, getAttractions, getAllAttractions, getFacilities, getPoiById, LANDMARK_ATTRACTIONS } from './data/index.js';
+import {
+  PARKS, getPois, getAttractions, getAllAttractions, getFacilities, getPoiById, LANDMARK_ATTRACTIONS,
+  getEntrances, getMainEntrance, getParkBoundaries,
+} from './data/index.js';
 import { closureOnDate } from './labels.js';
 import { store } from './store.js';
 import { createMapController } from './map.js';
@@ -131,8 +134,10 @@ function mapPois() {
   }
   if (cat === 'favorites') {
     const fav = new Set(store.getFavorites());
-    return getPois(state.park).filter((p) => fav.has(p.id) && p.coordinates
+    const fromPois = getPois(state.park).filter((p) => fav.has(p.id) && p.coordinates
       && (p.type === 'attraction' || facilityVisible(p, includeLowTrust(), state.park, facilityVisibilityOpts())));
+    const fromEnt = getEntrances(state.park).filter((p) => fav.has(p.id) && p.coordinates);
+    return [...fromPois, ...fromEnt];
   }
   // all: every app-managed marker
   return [...getAttractions(state.park), ...visibleFacilities()];
@@ -227,7 +232,68 @@ function renderMap() {
     selectedId: state.selectedId,
     rideBadges: rideBadgeMap(pois),
   });
+  syncEntranceAndBoundary();
   syncMeetupMarker();
+}
+
+function syncEntranceAndBoundary() {
+  const s = store.getSettings();
+  const showEnt = s.showEntranceMarkers !== false;
+  map.renderEntrances(getEntrances(state.park), {
+    onSelect: selectPoi,
+    selectedId: state.selectedId,
+    show: showEnt,
+  });
+  // Boundaries stay visible even when layerMode is none (park orientation).
+  const thin = state.layerMode === 'attractions' || state.layerMode === 'restrooms'
+    || state.layerMode === 'favorites';
+  map.setBoundaries(getParkBoundaries(state.park), {
+    showParkBoundaries: s.showParkBoundaries !== false,
+    showPregateBoundary: s.showPregateBoundary !== false,
+    showBoundaryLabels: s.showBoundaryLabels !== false,
+    dimmed: thin,
+  });
+}
+
+function focusMainEntrance() {
+  const ent = getMainEntrance(state.park);
+  if (!ent || !ent.coordinates) {
+    const c = parkMeta().entranceCoordinates;
+    if (c) map.focusPoi(c, 17);
+    return;
+  }
+  map.focusPoi(ent.coordinates, 17);
+  if (store.getSettings().showEntranceMarkers !== false) selectPoi(ent.id);
+}
+
+function showEntrancesOverview() {
+  const ents = getEntrances(state.park);
+  if (!ents.length) { toast('입구 데이터가 없습니다'); return; }
+  state.layerMode = state.layerMode === 'none' ? 'all' : state.layerMode;
+  syncEntranceAndBoundary();
+  const main = getMainEntrance(state.park) || ents[0];
+  if (main.coordinates) {
+    map.focusPoi(main.coordinates, 17);
+  }
+  els.sheetTitle.textContent = `${parkMeta().shortKo || state.park} 입구`;
+  state.tab = 'search';
+  els.sheet.classList.add('open');
+  els.sheet.setAttribute('aria-hidden', 'false');
+  els.sheetBody.innerHTML = `<p class="muted small">입구 위치는 안내용입니다. 파크 경계는 안내용 시각 표시입니다.</p>
+    <ul class="poi-list">${ents.map((e) => `
+      <li>
+        <button class="li" data-poi="${ui.esc(e.id)}" type="button">
+          <span class="li-mark li-entrance" aria-hidden="true">入</span>
+          <span class="li-body">
+            <span class="li-name">${ui.esc(e.nameKo)}</span>
+            <span class="li-meta">${e.entranceKind === 'main_entrance' ? '주 출입구' : e.entranceKind === 'pre_gate' ? '프리게이트' : '스테이션 쪽'}</span>
+          </span>
+        </button>
+      </li>`).join('')}</ul>
+    <div class="detail-actions">
+      <button class="btn btn-primary" data-act="focus-main-entrance" type="button">파크 정문으로 이동</button>
+    </div>`;
+  syncNav();
 }
 
 // Korean label layer: sources (per park) + options (per selection/fav/setting).
@@ -478,7 +544,7 @@ function sharePanelHtml() {
 
 function renderFavorites() {
   const favIds = store.getFavorites();
-  const all = getPois(state.park);
+  const all = [...getPois(state.park), ...getEntrances(state.park)];
   let favs = all.filter((p) => favIds.includes(p.id));
   favs = annotateClosure(withDistance(favs, state.user && state.user.coords));
   const vd = store.getVisitDate();
@@ -576,6 +642,25 @@ function renderSettings() {
     <h3 class="sheet-h3">가족 집결지 (${state.park})</h3>
     ${meetupSettingsHtml()}
 
+    <h3 class="sheet-h3">입구·경계 표시</h3>
+    <p class="muted small">파크 경계는 안내용 시각 표시입니다. 실제 운영 구역과 세부 동선은 현장 안내를 따라 주세요.</p>
+    <label class="switch-row">
+      <input type="checkbox" id="set-entrance-markers" ${s.showEntranceMarkers !== false ? 'checked' : ''} />
+      <span>입구 표시</span>
+    </label>
+    <label class="switch-row">
+      <input type="checkbox" id="set-park-boundaries" ${s.showParkBoundaries !== false ? 'checked' : ''} />
+      <span>파크 경계 표시</span>
+    </label>
+    <label class="switch-row">
+      <input type="checkbox" id="set-pregate-boundary" ${s.showPregateBoundary !== false ? 'checked' : ''} />
+      <span>프리게이트 표시</span>
+    </label>
+    <label class="switch-row">
+      <input type="checkbox" id="set-boundary-labels" ${s.showBoundaryLabels !== false ? 'checked' : ''} />
+      <span>경계 라벨 표시</span>
+    </label>
+
     <h3 class="sheet-h3">지도 표시</h3>
     <p class="muted small"><strong>기본 위치 표시</strong> — TDL: High만 · TDS: Medium 이상(공식 지도 기반 추정). 어트랙션은 항상 대략적 위치로 표시됩니다.</p>
     <label class="switch-row">
@@ -630,12 +715,17 @@ function renderSettings() {
 
 function meetupSettingsHtml() {
   const m = store.getMeetup(state.park);
+  const mainEnt = getMainEntrance(state.park);
+  const quickEntrance = mainEnt
+    ? `<button class="btn" data-act="meetup-set-poi" data-poi="${ui.esc(mainEnt.id)}" type="button">${ui.esc(mainEnt.nameKo)}를 집결지로</button>`
+    : `<button class="btn" data-act="meetup-entrance" type="button">파크 정문을 집결지로</button>`;
   if (!m) {
     return `<p class="muted small">가족이 흩어질 때 만날 곳을 저장해 두세요. TDL·TDS는 각각 따로 저장됩니다.</p>
       <div class="detail-actions">
-        <button class="btn" data-act="meetup-pick-map" type="button">지도에서 집결지 선택</button>
+        ${quickEntrance}
         <button class="btn" data-act="meetup-from-selected" type="button">현재 선택 시설을 집결지로</button>
-        <button class="btn" data-act="meetup-entrance" type="button">파크 정문을 집결지로</button>
+        <button class="btn" data-act="meetup-pick-map" type="button">사용자 지정 위치</button>
+        <button class="btn" data-act="meetup-entrance" type="button">파크 정문 좌표로 지정</button>
       </div>`;
   }
   return `<div class="notice">
@@ -663,7 +753,7 @@ function renderDetail(id) {
   const routeInfo = (state.routeId === id && state.routeInfo) ? state.routeInfo : null;
   const graph = WALK_GRAPHS[state.park];
   const fromGuess = routeStartCoords() || parkMeta().entranceCoordinates;
-  const canWalkRoute = canOfferWalkRoute(graph, withArea, fromGuess, {
+  const canWalkRoute = withArea.type === 'entrance' ? false : canOfferWalkRoute(graph, withArea, fromGuess, {
     maxBounds: parkMeta().maxBounds,
     entranceCoords: parkMeta().entranceCoordinates,
   });
@@ -681,14 +771,19 @@ function renderDetail(id) {
     showFamilyBadge: !!store.getSettings().showFamilyRideBadge,
   };
   let html;
-  if (withArea.type === 'attraction') {
+  if (withArea.type === 'entrance') {
+    html = ui.entranceDetail(withArea, { parkName: parkMeta().nameKo, ...common });
+  } else if (withArea.type === 'attraction') {
     html = ui.attractionDetail(withArea, { children: store.getChildren(), visitDate: store.getVisitDate(), ...common });
+    html += `<div class="detail-actions">
+      <button class="btn" data-act="meetup-set-poi" data-poi="${ui.esc(id)}" type="button">이 시설을 가족 집결지로</button>
+    </div>`;
   } else {
     html = ui.facilityDetail(withArea, common);
+    html += `<div class="detail-actions">
+      <button class="btn" data-act="meetup-set-poi" data-poi="${ui.esc(id)}" type="button">이 시설을 가족 집결지로</button>
+    </div>`;
   }
-  html += `<div class="detail-actions">
-    <button class="btn" data-act="meetup-set-poi" data-poi="${ui.esc(id)}" type="button">이 시설을 가족 집결지로</button>
-  </div>`;
   els.sheetBody.innerHTML = html;
 }
 
@@ -707,6 +802,7 @@ function renderFamilyNearby() {
   els.sheetTitle.textContent = '지금 근처';
   const ref = nearbyReferencePoint();
   let body = `<div class="emergency-row" role="group" aria-label="긴급 빠른 버튼">
+    <button class="btn emerg-btn" data-act="show-entrances" type="button">입구</button>
     <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="restroom" type="button">가까운 화장실</button>
     <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="firstAid" type="button">중앙구호실</button>
     <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="baby" type="button">베이비케어·수유실</button>
@@ -1398,9 +1494,14 @@ function setMeetupFromSelected() {
 }
 
 function setMeetupEntrance() {
-  const c = parkMeta().entranceCoordinates;
+  const main = getMainEntrance(state.park);
+  const c = (main && main.coordinates) || parkMeta().entranceCoordinates;
   if (!c) return;
-  saveMeetup({ coordinates: c, facilityId: null, label: `${parkMeta().nameKo} 정문` });
+  saveMeetup({
+    coordinates: c,
+    facilityId: main ? main.id : null,
+    label: main ? main.nameKo : `${parkMeta().nameKo} 정문`,
+  });
   if (state.tab === 'settings') renderSettings();
 }
 
@@ -1507,6 +1608,7 @@ function showNearbyFromEntrance() {
   els.sheetTitle.textContent = '지금 근처 (정문 기준)';
   let body = `<p class="muted small">파크 정문 기준 직선거리 순입니다. 실제 이동거리는 다를 수 있습니다.</p>`;
   body += `<div class="emergency-row" role="group" aria-label="긴급 빠른 버튼">
+    <button class="btn emerg-btn" data-act="show-entrances" type="button">입구</button>
     <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="restroom" type="button">가까운 화장실</button>
     <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="firstAid" type="button">중앙구호실</button>
     <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="baby" type="button">베이비케어·수유실</button>
@@ -1727,7 +1829,9 @@ function bindEvents() {
       if (act === 'nearby') {
         if (state.tab === 'familyNearby') closeSheet();
         else openSheetPanel('familyNearby');
-      } else if (act === 'restroom') jumpNearest('restroom');
+      } else if (act === 'entrance') showEntrancesOverview();
+      else if (act === 'gate') focusMainEntrance();
+      else if (act === 'restroom') jumpNearest('restroom');
       else if (act === 'firstAid') jumpNearest('firstAid');
       else if (act === 'baby') jumpNearest('baby');
       else if (act === 'meetup') viewMeetup();
@@ -1827,6 +1931,15 @@ function bindEvents() {
       if (a === 'meetup-from-selected') setMeetupFromSelected();
       if (a === 'meetup-entrance') setMeetupEntrance();
       if (a === 'meetup-set-poi') setMeetupFromPoi(id);
+      if (a === 'show-entrances') showEntrancesOverview();
+      if (a === 'focus-main-entrance') focusMainEntrance();
+      if (a === 'focus-entrance') {
+        const ent = getPoiById(state.park, id);
+        if (ent && ent.coordinates) {
+          map.focusPoi(ent.coordinates, 17);
+          toast(ent.nameKo || '입구로 이동');
+        }
+      }
       if (a === 'meetup-clear') { store.clearMeetup(state.park); syncMeetupMarker(); toast('집결지를 삭제했습니다'); renderSettings(); }
       if (a === 'meetup-note-save') {
         const m = store.getMeetup(state.park);
@@ -1929,6 +2042,22 @@ function bindEvents() {
       store.setSettings({ showFamilyRideBadge: e.target.checked });
       renderMap();
       if (state.tab === 'attractions' || state.tab === 'favorites' || state.tab === 'detail') renderSheet();
+    }
+    if (e.target.id === 'set-entrance-markers') {
+      store.setSettings({ showEntranceMarkers: e.target.checked });
+      renderMap();
+    }
+    if (e.target.id === 'set-park-boundaries') {
+      store.setSettings({ showParkBoundaries: e.target.checked });
+      renderMap();
+    }
+    if (e.target.id === 'set-pregate-boundary') {
+      store.setSettings({ showPregateBoundary: e.target.checked });
+      renderMap();
+    }
+    if (e.target.id === 'set-boundary-labels') {
+      store.setSettings({ showBoundaryLabels: e.target.checked });
+      renderMap();
     }
     if (e.target.id === 'set-pregate') {
       const on = e.target.checked;
