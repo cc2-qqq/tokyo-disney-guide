@@ -1,6 +1,6 @@
 // Service worker: offline app shell + data caching. Relative paths keep it working
 // on GitHub Pages sub-paths (e.g. /tokyo-disney-guide/).
-const VERSION = 'tdg-v13';
+const VERSION = 'tdg-v14';
 const SHELL_CACHE = `${VERSION}-shell`;
 
 const SHELL = [

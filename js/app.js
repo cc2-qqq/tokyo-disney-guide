@@ -338,7 +338,7 @@ function getFilters() {
   const all = store.getFilters();
   return {
     attraction: all.attraction || { height: null },
-    facility: all.facility || {},
+    facility: store.getFacilityFilters(state.park),
   };
 }
 function setAttractionFilters(af) {
@@ -347,9 +347,7 @@ function setAttractionFilters(af) {
   store.setFilters(all);
 }
 function setFacilityFilters(ff) {
-  const all = store.getFilters();
-  all.facility = ff;
-  store.setFilters(all);
+  store.setFacilityFilters(state.park, ff);
 }
 
 function listCtx() {
@@ -403,13 +401,29 @@ function renderRestrooms() {
   if (f.nearest) items = sortByDistance(items);
   const wc = items.filter((p) => p.type === 'restroom').length;
   const baby = items.filter((p) => p.type === 'babyCare').length;
+  const resultCount = items.length;
   els.sheetTitle.textContent = `화장실 (${wc}) · 베이비케어 (${baby})`;
-  let body = facilityCountSummary() + facilityFilterBar(f);
+  let body = '';
+  if (f.highOnly) {
+    body += `<div class="filter-status notice" role="status">High 신뢰도만 보기 적용 중 · 결과 ${resultCount}곳</div>`;
+  }
+  body += facilityCountSummary() + facilityFilterBar(f);
   body += `<div class="notice"><p>중앙구호실·AED는 화장실이 아니어서 이 목록에 넣지 않습니다. 지도 탭에서 확인할 수 있어요.</p></div>`;
-  body += ui.listHtml(items, {
-    ...listOpts(),
-    emptyMsg: '표시할 화장실·베이비케어가 없습니다. 필터를 조정해 보세요.',
-  });
+  const tdsHighOnlyEmpty = state.park === 'TDS' && f.highOnly && resultCount === 0;
+  if (tdsHighOnlyEmpty) {
+    body += `<div class="notice facility-empty-guidance" role="status">
+      <p>도쿄디즈니씨 화장실은 현재 High 등급으로 검증된 좌표가 없습니다. 공식 지도 기반 추정 위치를 표시하려면 기본 위치 표시를 선택해 주세요.</p>
+      <div class="detail-actions">
+        <button class="btn btn-primary" data-act="facility-default-trust" type="button">기본 위치 표시</button>
+        <button class="btn" data-act="facility-keep-filter" type="button">필터 유지</button>
+      </div>
+    </div>`;
+  } else {
+    body += ui.listHtml(items, {
+      ...listOpts(),
+      emptyMsg: '표시할 화장실·베이비케어가 없습니다. 필터를 조정해 보세요.',
+    });
+  }
   if (unknown.length) {
     body += `<h3 class="sheet-h3">위치 확인 중 (${unknown.length})</h3>`;
     body += ui.listHtml(unknown.map((p) => ({ ...p, nameNote: (p.nameNote ? `${p.nameNote} · ` : '') + '좌표 확인 중' })), {
@@ -1833,6 +1847,18 @@ function bindEvents() {
       if (a === 'share-merge') applyPendingShare('merge');
       if (a === 'share-replace') applyPendingShare('replace');
       if (a === 'share-cancel') { state.pendingShare = null; renderFavorites(); }
+      if (a === 'facility-default-trust') {
+        // Clear High-only for current park only; keep includeEstimated as-is.
+        const ff = getFilters().facility;
+        ff.highOnly = false;
+        setFacilityFilters(ff);
+        toast('기본 위치 표시로 전환했습니다');
+        renderRestrooms();
+        renderMap();
+      }
+      if (a === 'facility-keep-filter') {
+        toast('High 신뢰도만 보기를 유지합니다');
+      }
       return;
     }
 

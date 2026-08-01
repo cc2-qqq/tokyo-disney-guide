@@ -299,6 +299,8 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 .route-card-dir { border-style: dashed; }
 .facility-count { margin-bottom: 10px; }
 .facility-count p { margin: 2px 0; }
+.filter-status { font-weight: 700; margin-bottom: 10px; }
+.facility-empty-guidance .detail-actions { margin-top: 10px; }
 .li-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .li-dist { font-size: 12px; color: var(--text-2); }
 .li-fav { color: #e6a800; }
