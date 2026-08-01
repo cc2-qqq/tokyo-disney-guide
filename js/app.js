@@ -7,12 +7,19 @@ import {
   matchText, attractionMatchesFilters, facilityMatchesFilters,
   facilityVisible, facilityBandCounts, withDistance, sortByDistance,
 } from './search.js';
-import { routeToPoi, UNSUPPORTED_MSG } from './routing.js';
-import { TDL_WALK_GRAPH } from './data/routes/tdlWalkGraph.js';
+import {
+  routeToPoi, canOfferWalkRoute, investigateRoute,
+  VERIFYING_MSG, UNVERIFIED_SEGMENT_MSG,
+} from './routing.js';
+import { TDL_WALK_GRAPH, TDL_LEGACY_WALK_GRAPH } from './data/routes/tdlWalkGraph.js';
 import { TDS_WALK_GRAPH } from './data/routes/tdsWalkGraph.js';
 import * as ui from './ui.js';
 
 const WALK_GRAPHS = { TDL: TDL_WALK_GRAPH, TDS: TDS_WALK_GRAPH };
+const ROUTE_DEBUG = (() => {
+  try { return new URLSearchParams(window.location.search).has('routeDebug'); }
+  catch { return false; }
+})();
 
 const state = {
   park: store.getPark(),
@@ -336,7 +343,7 @@ function renderSettings() {
       <p><strong>TDL</strong> 화장실 9곳 지도 기반 추정(대략 5~10m), 추가 검증 4곳, 미확인 1곳(비표시). 중앙구호실 1곳.</p>
       <p><strong>TDS</strong> 화장실 10곳·베이비케어 2곳·중앙구호실 1곳 — 공식 PDF 기반 추정(Google POI 미확인). 기본은 Medium 이상 표시, Low는 「낮은 신뢰도 위치까지 표시」로 켭니다.</p>
       <p><strong>키 기준</strong> 공식 FAQ(2026-08-01) 기준으로 운영 어트랙션 전수 반영. 레이징 스피리츠는 117~195cm.</p>
-      <p><strong>보행 경로</strong> 파크별 부분 보행 그래프(주요 간선). 미연결 구간은 직선 방향 안내로 전환됩니다.</p>
+      <p><strong>보행 경로</strong> 미검증 그래프는 사용하지 않습니다. TDL 월드바자·어드벤처랜드 시범 구간만 검증된 예상 경로를 제공하며, 그 외는 방향·직선거리만 안내합니다.</p>
       <p><strong>운영 종료·장기 휴장</strong> 스페이스 마운틴·버즈 라이트이어(TDL), 머메이드 라군 시어터(TDS)는 기본 목록·지도에서 제외했습니다.</p>
       <p class="small">모든 좌표는 실측 GPS가 아니며 참고용입니다. 실시간 대기시간·운영 여부는 공식 앱에서 확인하세요.</p>
     </div>`;
@@ -348,6 +355,12 @@ function renderDetail(id) {
   const withArea = getPois(state.park).find((p) => p.id === id) || poi;
   els.sheetTitle.textContent = withArea.nameKo || withArea.name;
   const routeInfo = (state.routeId === id && state.routeInfo) ? state.routeInfo : null;
+  const graph = WALK_GRAPHS[state.park];
+  const fromGuess = routeStartCoords() || parkMeta().entranceCoordinates;
+  const canWalkRoute = canOfferWalkRoute(graph, withArea, fromGuess, {
+    maxBounds: parkMeta().maxBounds,
+    entranceCoords: parkMeta().entranceCoordinates,
+  });
   const common = {
     isFav: store.isFavorite(id),
     inVisit: store.inVisitList(id),
@@ -355,6 +368,7 @@ function renderDetail(id) {
     userCoords: state.user && state.user.coords,
     direction: directionFor(withArea),
     routeInfo,
+    canWalkRoute,
   };
   if (withArea.type === 'attraction') {
     els.sheetBody.innerHTML = ui.attractionDetail(withArea, { children: store.getChildren(), visitDate: store.getVisitDate(), ...common });
@@ -452,6 +466,7 @@ function clearNavLines() {
   state.routeInfo = null;
   map.clearDirection();
   map.clearRoute();
+  if (typeof map.clearRouteDebug === 'function') map.clearRouteDebug();
 }
 
 function setPark(p) {
@@ -508,11 +523,19 @@ function showDirection(id) {
   if (!poi || !poi.coordinates) return;
   if (!state.user) { toast('먼저 현재 위치를 켜 주세요'); return; }
   state.directionId = id;
-  state.routeId = null;
-  state.routeInfo = null;
+  state.routeId = id;
+  state.routeInfo = {
+    mode: 'direction',
+    support: 'direction',
+    distance: haversineMeters(state.user.coords, poi.coordinates),
+    reason: VERIFYING_MSG,
+  };
   map.clearRoute();
+  map.clearRouteDebug();
   map.showDirection(state.user.coords, poi.coordinates);
+  if (ROUTE_DEBUG) maybeShowLegacyDebug(poi, state.user.coords);
   renderDetail(id);
+  toast('방향·직선거리만 안내합니다');
 }
 
 function showRoute(id) {
@@ -520,7 +543,7 @@ function showRoute(id) {
   if (!poi || !poi.coordinates) return;
 
   if (!state.user) {
-    toast('현재 위치가 없습니다. 위치를 켜거나, 파크 입구부터 경로를 볼 수 있어요.');
+    toast('현재 위치가 없습니다. 파크 입구부터 검증된 예상 경로를 봅니다.');
     state.outsideParkChoice = 'entrance';
   } else if (!isInsidePark(state.user.coords) && state.outsideParkChoice !== 'entrance') {
     const dist = haversineMeters(state.user.coords, poi.coordinates);
@@ -528,11 +551,12 @@ function showRoute(id) {
       mode: 'direction',
       support: 'unsupported',
       distance: dist,
-      reason: '현재 위치가 선택한 파크 밖에 있습니다. 아래에서 "파크 입구부터 경로 보기"를 선택하거나, 다른 파크로 전환해 주세요.',
+      reason: '현재 위치가 선택한 파크 밖에 있습니다. 아래에서 파크 입구 출발을 선택하거나 방향 보기를 이용해 주세요.',
     };
     state.routeId = id;
     map.clearRoute();
     map.clearDirection();
+    map.clearRouteDebug();
     renderDetail(id);
     injectOutsideParkChoices(id);
     return;
@@ -542,7 +566,7 @@ function showRoute(id) {
   if (!from) { toast('출발 위치를 확인할 수 없습니다'); return; }
 
   const graph = WALK_GRAPHS[state.park];
-  const result = routeToPoi(graph, from, poi, { maxBounds: parkMeta().maxBounds });
+  const result = routeToPoi(graph, from, poi, { maxBounds: parkMeta().maxBounds, requireVerified: true });
   state.directionId = null;
   state.routeId = id;
   if (result.ok) {
@@ -555,30 +579,57 @@ function showRoute(id) {
       coverageNote: result.coverageNote,
     };
     map.showRoute(result.path);
+    if (ROUTE_DEBUG) map.showRouteDebug(result.debug, { graph });
+    else map.clearRouteDebug();
     toast(`${result.supportLabel} · ${formatDistance(result.distance)}`);
   } else {
     const dirFrom = state.user && isInsidePark(state.user.coords) ? state.user.coords : from;
     const dist = haversineMeters(dirFrom, poi.coordinates);
     state.routeInfo = {
       mode: 'direction',
-      support: 'unsupported',
+      support: result.support || 'unsupported',
       distance: dist,
-      reason: result.reason || UNSUPPORTED_MSG,
+      reason: result.reason || UNVERIFIED_SEGMENT_MSG,
     };
     map.showDirection(dirFrom, poi.coordinates);
-    toast('경로 미지원 — 직선 방향만 표시합니다');
+    if (ROUTE_DEBUG) {
+      maybeShowLegacyDebug(poi, from);
+      if (result.debug) map.showRouteDebug(result.debug, { graph });
+    } else {
+      map.clearRouteDebug();
+    }
+    toast('검증된 경로 없음 — 방향만 표시');
   }
   renderDetail(id);
 }
 
+function maybeShowLegacyDebug(poi, from) {
+  if (!ROUTE_DEBUG || state.park !== 'TDL') return;
+  const legacy = investigateRoute(TDL_LEGACY_WALK_GRAPH, from, poi, {
+    maxBounds: parkMeta().maxBounds,
+  });
+  if (legacy.debug) {
+    map.showRouteDebug(legacy.debug, { graph: TDL_LEGACY_WALK_GRAPH });
+    console.info('[routeDebug] legacy path', legacy);
+  }
+}
+
 function injectOutsideParkChoices(id) {
-  const host = els.sheetBody.querySelector('.route-card');
+  const host = els.sheetBody.querySelector('.route-card') || els.sheetBody;
   if (!host) return;
   const box = document.createElement('div');
   box.className = 'outside-choices';
+  const graph = WALK_GRAPHS[state.park];
+  const poi = getPoiById(state.park, id);
+  const canWalk = canOfferWalkRoute(graph, poi, parkMeta().entranceCoordinates, {
+    maxBounds: parkMeta().maxBounds,
+    entranceCoords: parkMeta().entranceCoordinates,
+  });
   box.innerHTML = `
     <p class="detail-note"><strong>현재 위치가 선택한 파크 밖에 있습니다.</strong></p>
-    <button class="btn btn-primary" data-act="route-from-entrance" data-poi="${ui.esc(id)}" type="button">파크 입구부터 경로 보기</button>
+    ${canWalk
+    ? `<button class="btn btn-primary" data-act="route-from-entrance" data-poi="${ui.esc(id)}" type="button">파크 입구부터 예상 경로 보기</button>`
+    : ''}
     <button class="btn" data-act="keep-map" type="button">현재 위치는 유지하고 파크 지도 보기</button>
     <button class="btn" data-act="switch-other-park" type="button">다른 파크로 전환</button>`;
   host.appendChild(box);

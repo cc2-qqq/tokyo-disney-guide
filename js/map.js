@@ -32,6 +32,7 @@ export function createMapController(elId) {
   let accuracyCircle = null;
   let directionLine = null;
   let routeLine = null;
+  let debugGroup = null;
   let basemapFailed = false;
   let onBasemapError = null;
   let currentTheme = 'auto';
@@ -322,6 +323,73 @@ export function createMapController(elId) {
     if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
   }
 
+  /** Developer-only walk-graph overlay (?routeDebug=1). Not shown to normal users. */
+  function showRouteDebug(debug, { graph } = {}) {
+    clearRouteDebug();
+    if (!map || !debug) return;
+    if (!debugGroup) debugGroup = L.layerGroup().addTo(map);
+
+    if (graph) {
+      for (const edge of graph.edges || []) {
+        const geom = edge.geometry && edge.geometry.length >= 2
+          ? edge.geometry
+          : null;
+        if (!geom) continue;
+        const st = edge.status || (edge.verified ? 'verified' : 'unverified');
+        const color = st === 'verified' ? '#14804a' : st === 'blocked' ? '#999' : '#c45c26';
+        L.polyline(geom, {
+          color, weight: 3, opacity: 0.55, dashArray: st === 'verified' ? null : '4,6',
+          className: 'route-debug-edge',
+        }).bindTooltip(`${edge.id || '?'} · ${st} · ${edge.distance || '?'}m`, { sticky: true })
+          .addTo(debugGroup);
+      }
+      for (const n of graph.nodes || []) {
+        L.circleMarker(n.coordinates, {
+          radius: 5, color: '#10202e', fillColor: '#ffe08a', fillOpacity: 0.95, weight: 1,
+        }).bindTooltip(`${n.id}<br>${n.notes || ''}`, { direction: 'top' }).addTo(debugGroup);
+      }
+    }
+
+    if (debug.approachConnector) {
+      L.polyline([debug.approachConnector.from, debug.approachConnector.to], {
+        color: '#d9480f', weight: 3, dashArray: '2,8', opacity: 0.9,
+      }).bindTooltip(`approach ${debug.approachConnector.lengthM}m`).addTo(debugGroup);
+    }
+    if (debug.exitConnector) {
+      L.polyline([debug.exitConnector.from, debug.exitConnector.to], {
+        color: '#d9480f', weight: 3, dashArray: '2,8', opacity: 0.9,
+      }).bindTooltip(`exit ${debug.exitConnector.lengthM}m`).addTo(debugGroup);
+    }
+    (debug.nodes || []).forEach((n, i) => {
+      if (!n.coordinates) return;
+      L.marker(n.coordinates, {
+        icon: L.divIcon({
+          className: 'route-debug-node',
+          html: `<span class="rdn">${i}</span>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+        interactive: false,
+      }).addTo(debugGroup);
+    });
+    (debug.edges || []).forEach((edge, i) => {
+      if (!edge.geometry || edge.geometry.length < 2) return;
+      const mid = edge.geometry[Math.floor(edge.geometry.length / 2)];
+      L.marker(mid, {
+        icon: L.divIcon({
+          className: 'route-debug-edge-label',
+          html: `<span class="rde">E${i}:${edge.lengthM}m/${edge.status}</span>`,
+          iconSize: [0, 0],
+        }),
+        interactive: false,
+      }).addTo(debugGroup);
+    });
+  }
+
+  function clearRouteDebug() {
+    if (debugGroup) { debugGroup.clearLayers(); }
+  }
+
   // ---- Korean label layer ----
   // Sources change on park switch / marker render; options change on select / fav / setting.
   function setLabelSources({ parkMeta, areas, attractions, facilities, landmark }) {
@@ -474,7 +542,7 @@ export function createMapController(elId) {
   return {
     init, setPark, setBasemapTheme, setBasemapLabelMode, resetView, renderMarkers, highlight, focusPoi,
     setUserLocation, centerOnUser, showDirection, clearDirection,
-    showRoute, clearRoute, invalidate,
+    showRoute, clearRoute, showRouteDebug, clearRouteDebug, invalidate,
     setLabelSources, setLabelOptions, renderLabels,
     getMap: () => map,
   };

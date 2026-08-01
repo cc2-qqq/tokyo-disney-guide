@@ -72,14 +72,23 @@ const edgePairs = [
 ];
 
 const byId = Object.fromEntries(nodes.map((x) => [x.id, x]));
-const edges = edgePairs.map(([from, to]) => {
+const edges = edgePairs.map(([from, to], i) => {
   const a = byId[from]; const b = byId[to];
   return {
-    from, to,
+    id: `tds-legacy-e-${String(i + 1).padStart(3, '0')}`,
+    from,
+    to,
+    geometry: [a.coordinates, b.coordinates],
     distance: Math.round(haversineMeters(a.coordinates, b.coordinates)),
-    accessible: true, stairs: false, indoor: false,
-    oneWay: false, temporarilyClosed: false,
-    notes: 'PDF·위성 기반 추정 보행 연결(수로 횡단 없음)',
+    status: 'unverified',
+    verified: false,
+    accessible: true,
+    stairs: false,
+    indoor: false,
+    oneWay: false,
+    temporarilyClosed: false,
+    source: 'legacy-straight-links',
+    notes: '미검증 직선 간선 — 사용자 경로 계산에 사용하지 않음',
   };
 });
 
@@ -101,14 +110,25 @@ const destinationConnectors = [
 
 export const TDS_WALK_GRAPH = {
   park: 'TDS',
-  confidence: '부분',
-  coverageNote: '하버 링·각 포트 주요 간선 + 판타지 스프링스 입구. 호텔 전용 통로·배후구역·세부 실내 복도는 미포함.',
-  coveredAreas: [
+  routingEnabled: false,
+  confidence: '미검증',
+  coverageNote: 'TDS 보행 그래프는 검증 전까지 사용자 경로에 사용하지 않습니다. 방향·직선거리만 안내합니다.',
+  routingCoverage: {
+    'mediterranean-harbor': 'unverified',
+    'american-waterfront': 'unverified',
+    'port-discovery': 'unverified',
+    'fantasy-springs': 'unverified',
+    'lost-river-delta': 'unverified',
+    'arabian-coast': 'unverified',
+    'mermaid-lagoon': 'unverified',
+    'mysterious-island': 'unverified',
+  },
+  coveredAreas: [],
+  incompleteAreas: [
     'mediterranean-harbor', 'american-waterfront', 'port-discovery',
     'fantasy-springs', 'lost-river-delta', 'arabian-coast',
     'mermaid-lagoon', 'mysterious-island',
   ],
-  incompleteAreas: ['호텔 미라코스타 전용 통로', '배후구역', '머메이드 라군 실내 세부'],
   nodes,
   edges,
   destinationConnectors,
@@ -117,6 +137,7 @@ export const TDS_WALK_GRAPH = {
 function n(id, coordinates, area, type, notes) {
   return {
     id, coordinates, area, type,
+    status: 'unverified',
     verified: false,
     source: 'official_pdf_layout + attraction_anchor',
     notes,

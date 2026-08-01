@@ -124,6 +124,22 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 #map .maplibregl-ctrl-attrib { display: none; } /* Leaflet attribution shows Protomaps/OSM */
 
 /* ---------- Korean self-drawn map labels ---------- */
+/* Dev-only walk route debug (?routeDebug=1) */
+.route-debug-node { background: none; border: 0; }
+.route-debug-node .rdn {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: #ffe08a; color: #10202e; font: 700 11px/1 sans-serif;
+  border: 1px solid #10202e;
+}
+.route-debug-edge-label { background: none; border: 0; }
+.route-debug-edge-label .rde {
+  display: inline-block; transform: translate(-50%, -50%);
+  background: rgba(255,255,255,.88); color: #10202e;
+  font: 600 10px/1.2 sans-serif; padding: 1px 4px; border-radius: 4px;
+  white-space: nowrap; border: 1px solid rgba(0,0,0,.2);
+}
+
 .map-label-wrap { background: none; border: 0; }
 .map-label {
   position: absolute; left: 0; top: 0; pointer-events: none;
