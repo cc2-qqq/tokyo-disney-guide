@@ -42,12 +42,29 @@ const DEFAULT_SETTINGS = {
   theme: 'auto', // 'auto' | 'light' | 'dark'
   // Vector basemap label language: Korean-first (keeps JP as data / high-zoom aux).
   mapLabelMode: 'ko', // 'ko' | 'ko_ja' | 'ja'
-  showFamilyRideBadge: true, // 목록·마커 가족 탑승 배지
-  showEntranceMarkers: true, // 입구 마커
-  showParkBoundaries: true, // 파크·유료구역 경계
-  showPregateBoundary: true, // 프리게이트 영역 경계
-  showBoundaryLabels: true, // 경계 라벨
+  showFamilyRideBadge: true, // 목록·상세·선택 마커 가족 탑승 배지
+  showEntranceMarkers: true, // 입구 마커(기본은 메인만; 보조는 입구 모드)
+  showParkBoundaries: false, // 파크 경계(안내용) — 기본 숨김
+  showPregateBoundary: true, // 입구 모드에서 게이트선·화살표 허용
+  showBoundaryLabels: false, // 경계 라벨 — 기본 숨김(화면 단순화)
+  // One-time migration marker for sparse-map defaults (do not remove).
+  mapSimplifyV1: true,
 };
+
+/** Force sparse-map defaults once for users who had boundaries on. */
+function migrateSettings(raw) {
+  const src = raw && typeof raw === 'object' ? { ...raw } : {};
+  if (src.mapSimplifyV1 === true) return src;
+  src.showParkBoundaries = false;
+  src.showBoundaryLabels = false;
+  src.mapSimplifyV1 = true;
+  try {
+    write(KEY.settings, { ...DEFAULT_SETTINGS, ...src });
+  } catch {
+    /* ignore */
+  }
+  return src;
+}
 
 const PRIORITIES = new Set(['must', 'maybe', 'hold']);
 
@@ -160,8 +177,14 @@ export const store = {
     return list.includes(id);
   },
 
-  getSettings() { return { ...DEFAULT_SETTINGS, ...read(KEY.settings, {}) }; },
-  setSettings(s) { write(KEY.settings, { ...this.getSettings(), ...s }); },
+  getSettings() {
+    const migrated = migrateSettings(read(KEY.settings, {}));
+    return { ...DEFAULT_SETTINGS, ...migrated };
+  },
+  setSettings(s) {
+    const next = { ...this.getSettings(), ...s, mapSimplifyV1: true };
+    write(KEY.settings, next);
+  },
 
   getVisitDate() {
     const v = read(KEY.visitDate, DEFAULT_VISIT_DATE);

@@ -20,7 +20,7 @@ import {
 import { TDL_WALK_GRAPH, TDL_LEGACY_WALK_GRAPH } from './data/routes/tdlWalkGraph.js';
 import { TDS_WALK_GRAPH } from './data/routes/tdsWalkGraph.js';
 import {
-  familyRideSummary, applyFamilyQuick, attractionPassesFamilyExtras, buildNearbySections,
+  familyRideSummary, applyFamilyQuick, attractionPassesFamilyExtras,
 } from './family.js';
 import {
   buildShareData, encodeShareToParam, decodeShareParam, buildShareUrl,
@@ -40,7 +40,10 @@ const state = {
   tab: 'map', // map | attractions | restrooms | favorites | settings | detail | search | filter | familyNearby
   prevTab: 'attractions',
   // Map app-marker category (independent of open panel).
-  layerMode: 'all', // all | attractions | restrooms | favorites | none
+  // map = sparse default (selected / visit list); category layers toggle on demand.
+  layerMode: 'map', // map | attractions | restrooms | favorites | none
+  // Entrance detail mode: show pregate/station + gate cues (via 근처 → 메인 입구).
+  entranceDetail: false,
   query: '',
   selectedId: null,
   directionId: null,    // POI id currently showing direction line
@@ -69,7 +72,6 @@ function cacheEls() {
   els.parkToggle = $('#park-toggle');
   els.search = $('#search-input');
   els.locBtn = $('#loc-btn');
-  els.nearbyBtn = $('#nearby-btn');
   els.filterBtn = $('#filter-btn');
   els.sheet = $('#sheet');
   els.sheetTitle = $('#sheet-title');
@@ -101,8 +103,8 @@ function visibleFacilities({ restroomTabOnly = false } = {}) {
 
 /** Active map layer from layerMode (panel tab must not drive markers). */
 function mapCategory() {
-  if (state.layerMode === 'all') return 'map';
-  return state.layerMode; // attractions | restrooms | favorites | none
+  if (state.layerMode === 'all') return 'map'; // legacy alias → sparse map
+  return state.layerMode; // map | attractions | restrooms | favorites | none
 }
 
 function poiMatchesCategory(poi, category = mapCategory()) {
@@ -112,6 +114,51 @@ function poiMatchesCategory(poi, category = mapCategory()) {
   if (category === 'restrooms') return isRestroomTabFacility(poi);
   if (category === 'favorites') return store.isFavorite(poi.id);
   return true;
+}
+
+/** Sparse default map: selected / nav targets + visit-list stops (not every POI). */
+function sparseMapPois() {
+  const keep = new Set();
+  if (state.selectedId) keep.add(state.selectedId);
+  if (state.directionId) keep.add(state.directionId);
+  if (state.routeId) keep.add(state.routeId);
+  for (const id of store.getVisitList()) keep.add(id);
+  return getPois(state.park).filter((p) => keep.has(p.id) && p.coordinates);
+}
+
+/** First unfinished visit-list stop (fallback: first item). */
+function nextVisitId() {
+  const list = store.getVisitList();
+  if (!list.length) return null;
+  for (const id of list) {
+    if (!store.isDone(id)) return id;
+  }
+  return list[0];
+}
+
+/** Decorate POIs for visit-order markers / nearest restroom highlight. */
+function decorateMapPois(pois) {
+  const visitIds = store.getVisitList();
+  const nextId = nextVisitId();
+  const sparse = state.layerMode === 'map' || state.layerMode === 'all';
+  let nearestId = null;
+  if (state.layerMode === 'restrooms' && state.user?.coords && isInsidePark(state.user.coords)) {
+    const n = nearestFacility('restroom', state.user.coords);
+    nearestId = n?.id || null;
+  }
+  return pois.map((p) => {
+    const vi = visitIds.indexOf(p.id);
+    const inVisit = vi >= 0;
+    return {
+      ...p,
+      _visitOrder: inVisit ? vi + 1 : null,
+      _visitMust: inVisit && store.getVisitPriority(p.id) === 'must',
+      _visitDone: inVisit && store.isDone(p.id),
+      _isNext: inVisit && p.id === nextId,
+      _isNearest: p.id === nearestId,
+      _useVisitMarker: (sparse || state.layerMode === 'favorites') && inVisit,
+    };
+  });
 }
 
 // POIs shown on the map: filtered by layerMode.
@@ -139,8 +186,8 @@ function mapPois() {
     const fromEnt = getEntrances(state.park).filter((p) => fav.has(p.id) && p.coordinates);
     return [...fromPois, ...fromEnt];
   }
-  // all: every app-managed marker
-  return [...getAttractions(state.park), ...visibleFacilities()];
+  // map / all: sparse field guide view
+  return sparseMapPois();
 }
 
 function clearSelectionIfWrongCategory(category = mapCategory()) {
@@ -156,11 +203,14 @@ function clearSelectionIfWrongCategory(category = mapCategory()) {
 }
 
 function rideBadgeMap(pois) {
+  // Map clutter rule: badges only on the selected attraction marker (lists/detail keep their own badges).
   if (!store.getSettings().showFamilyRideBadge) return {};
+  if (!state.selectedId) return {};
   const children = store.getChildren();
   const out = {};
   for (const p of pois) {
     if (p.type !== 'attraction') continue;
+    if (p.id !== state.selectedId) continue;
     const s = familyRideSummary(p, children);
     if (s.short) out[p.id] = s.short;
   }
@@ -226,7 +276,7 @@ function toast(msg, ms = 2600) {
 
 // ---- rendering ----
 function renderMap() {
-  const pois = withDistance(mapPois(), state.user && state.user.coords);
+  const pois = decorateMapPois(withDistance(mapPois(), state.user && state.user.coords));
   map.renderMarkers(pois, {
     onSelect: selectPoi,
     selectedId: state.selectedId,
@@ -243,19 +293,39 @@ function syncEntranceAndBoundary() {
     onSelect: selectPoi,
     selectedId: state.selectedId,
     show: showEnt,
+    showAux: !!state.entranceDetail,
+    // Compact main on normal layers; hero only in entrance mode (or when main is selected).
+    heroMain: !!state.entranceDetail,
   });
-  // Boundaries stay visible even when layerMode is none (park orientation).
   const thin = state.layerMode === 'attractions' || state.layerMode === 'restrooms'
     || state.layerMode === 'favorites';
+  // Park outline opt-in only; gate cues only while entrance detail mode is on (zoom 18+ in map.js).
   map.setBoundaries(getParkBoundaries(state.park), {
-    showParkBoundaries: s.showParkBoundaries !== false,
-    showPregateBoundary: s.showPregateBoundary !== false,
-    showBoundaryLabels: s.showBoundaryLabels !== false,
+    showParkBoundaries: s.showParkBoundaries === true,
+    showPregateBoundary: !!state.entranceDetail && s.showPregateBoundary !== false,
+    showBoundaryLabels: s.showBoundaryLabels === true,
     dimmed: thin,
   });
+  syncNearbyFab();
 }
 
-function focusMainEntrance() {
+function syncNearbyFab() {
+  const btn = els.mapFab && els.mapFab.querySelector('[data-fab="nearby"]');
+  if (btn) {
+    const on = state.tab === 'familyNearby';
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+
+function focusMainEntrance({ openDetail = true, enableEntranceMode = true } = {}) {
+  if (enableEntranceMode) {
+    state.entranceDetail = true;
+    if (store.getSettings().showEntranceMarkers === false) {
+      store.setSettings({ showEntranceMarkers: true });
+    }
+    syncEntranceAndBoundary();
+  }
   const ent = getMainEntrance(state.park);
   if (!ent || !ent.coordinates) {
     const c = parkMeta().entranceCoordinates;
@@ -263,13 +333,34 @@ function focusMainEntrance() {
     return;
   }
   map.focusPoi(ent.coordinates, 17);
-  if (store.getSettings().showEntranceMarkers !== false) selectPoi(ent.id);
+  if (openDetail && store.getSettings().showEntranceMarkers !== false) selectPoi(ent.id);
+  else syncEntranceAndBoundary();
+}
+
+/** Toggle auxiliary entrances + gate cues; main stays visible. */
+function toggleEntranceDetailMode() {
+  const ents = getEntrances(state.park);
+  if (!ents.length) { toast('입구 데이터가 없습니다'); return; }
+  state.entranceDetail = !state.entranceDetail;
+  if (store.getSettings().showEntranceMarkers === false) {
+    store.setSettings({ showEntranceMarkers: true });
+  }
+  syncEntranceAndBoundary();
+  const main = getMainEntrance(state.park) || ents[0];
+  if (state.entranceDetail) {
+    if (main?.coordinates) map.focusPoi(main.coordinates, 16);
+    toast('입구·프리게이트·스테이션 표시');
+  } else {
+    toast('메인 입구만 표시');
+  }
+  syncNav();
 }
 
 function showEntrancesOverview() {
+  // Keep list sheet for nearby/detail flows; FAB uses toggleEntranceDetailMode.
   const ents = getEntrances(state.park);
   if (!ents.length) { toast('입구 데이터가 없습니다'); return; }
-  state.layerMode = state.layerMode === 'none' ? 'all' : state.layerMode;
+  state.entranceDetail = true;
   syncEntranceAndBoundary();
   const main = getMainEntrance(state.park) || ents[0];
   if (main.coordinates) {
@@ -311,6 +402,9 @@ function syncLabelOptions() {
   map.setLabelOptions({
     selectedId: state.selectedId,
     favIds: new Set(store.getFavorites()),
+    visitIds: new Set(store.getVisitList()),
+    nextVisitId: nextVisitId(),
+    directionId: state.directionId,
     mapLabelMode: store.getSettings().mapLabelMode || 'ko',
     category: mapCategory(),
   });
@@ -555,11 +649,18 @@ function renderFavorites() {
 
   els.sheetTitle.textContent = '즐겨찾기 · 방문 목록';
   let body = `<h3 class="sheet-h3">즐겨찾기</h3>`;
-  body += ui.listHtml(favs, {
-    ...listOpts(),
-    isFav: () => true,
-    emptyMsg: '아직 즐겨찾기한 항목이 없습니다. 상세 화면에서 별표를 눌러 추가하세요.',
-  });
+  if (!favs.length) {
+    body += `<div class="notice">
+      <p>아직 즐겨찾기한 장소가 없어요.<br/>어트랙션이나 시설 상세에서 별을 눌러 추가할 수 있어요.</p>
+      <button class="btn btn-primary" data-act="open-attractions" type="button">어트랙션 보기</button>
+    </div>`;
+  } else {
+    body += ui.listHtml(favs, {
+      ...listOpts(),
+      isFav: () => true,
+      emptyMsg: '아직 즐겨찾기한 장소가 없어요.',
+    });
+  }
 
   body += `<h3 class="sheet-h3">내 방문 목록</h3>`;
   body += `<div class="chips" role="group" aria-label="방문 목록 정렬">
@@ -643,31 +744,31 @@ function renderSettings() {
     ${meetupSettingsHtml()}
 
     <h3 class="sheet-h3">입구·경계 표시</h3>
-      <p class="muted small">파크 영역(안내용) — 일반 게스트 이용구역을 이해하기 위한 안내용 경계입니다. 공식·법적 경계가 아니며 실제 운영구역은 현장 안내를 따라 주세요.</p>
+      <p class="muted small">기본 지도는 메인 입구만 표시합니다. 「근처」시트에서 메인 입구·입구 주변 안내를 켤 수 있습니다. 게이트선은 확대 18 이상에서만 보입니다. 파크 경계는 기본 숨김이며, 켜도 확대 15–16에서만 잠깐 보입니다.</p>
     <label class="switch-row">
       <input type="checkbox" id="set-entrance-markers" ${s.showEntranceMarkers !== false ? 'checked' : ''} />
       <span>입구 표시</span>
     </label>
     <label class="switch-row">
-      <input type="checkbox" id="set-park-boundaries" ${s.showParkBoundaries !== false ? 'checked' : ''} />
-      <span>파크 경계 표시</span>
+      <input type="checkbox" id="set-park-boundaries" ${s.showParkBoundaries === true ? 'checked' : ''} />
+      <span>파크 경계 표시 (확대 15–16만)</span>
     </label>
     <label class="switch-row">
       <input type="checkbox" id="set-pregate-boundary" ${s.showPregateBoundary !== false ? 'checked' : ''} />
-      <span>입구 게이트선·화살표 표시</span>
+      <span>입구 모드에서 게이트선·화살표</span>
     </label>
     <label class="switch-row">
-      <input type="checkbox" id="set-boundary-labels" ${s.showBoundaryLabels !== false ? 'checked' : ''} />
+      <input type="checkbox" id="set-boundary-labels" ${s.showBoundaryLabels === true ? 'checked' : ''} />
       <span>경계 라벨 표시</span>
     </label>
 
     <h3 class="sheet-h3">지도 표시</h3>
-    <p class="muted small"><strong>기본 위치 표시</strong> — TDL: High만 · TDS: Medium 이상(공식 지도 기반 추정). 어트랙션은 항상 대략적 위치로 표시됩니다.</p>
+    <p class="muted small"><strong>기본 지도</strong>는 현재 위치·메인 입구·집결지·선택 시설·방문 순서 마커만 표시합니다. 어트랙션·화장실은 하단 탭으로 켜세요.</p>
     <label class="switch-row">
       <input type="checkbox" id="set-family-badge" ${s.showFamilyRideBadge !== false ? 'checked' : ''} />
       <span>가족 탑승 배지 표시</span>
     </label>
-    <p class="muted small">어트랙션 목록·지도 마커에 2/2 · 1/2 · 0/2 배지를 표시합니다.</p>
+    <p class="muted small">목록·상세·선택한 마커에만 2/2 · 1/2 · 0/2 배지를 표시합니다.</p>
     <label class="switch-row">
       <input type="checkbox" id="set-estimated" ${s.includeEstimated ? 'checked' : ''} />
       <span>낮은 신뢰도 위치까지 표시</span>
@@ -797,62 +898,127 @@ function nearbyReferencePoint() {
   return { from: null, mode: 'noloc', label: null };
 }
 
+function nearbyDistLabel(from, coords) {
+  if (!from || !coords) return '거리 없음';
+  return `직선 ${formatDistance(haversineMeters(from, coords))}`;
+}
+
+function nearbyQuickRow({
+  title, meta, mapAct, mapPoi, directionPoi, disabledNote,
+}) {
+  const actions = [];
+  if (mapAct || mapPoi) {
+    const attrs = mapAct
+      ? `data-act="${ui.esc(mapAct)}"${mapPoi ? ` data-poi="${ui.esc(mapPoi)}"` : ''}`
+      : `data-poi="${ui.esc(mapPoi)}"`;
+    actions.push(`<button class="btn btn-primary" ${attrs} type="button">지도에서 보기</button>`);
+  }
+  if (directionPoi) {
+    actions.push(`<button class="btn" data-act="direction" data-poi="${ui.esc(directionPoi)}" type="button">방향 보기</button>`);
+  }
+  return `<li class="nearby-item">
+    <div class="nearby-main">
+      <strong class="nearby-name">${ui.esc(title)}</strong>
+      <span class="li-meta">${ui.esc(meta || '')}${disabledNote ? ` · ${ui.esc(disabledNote)}` : ''}</span>
+    </div>
+    ${actions.length ? `<div class="nearby-actions">${actions.join('')}</div>` : ''}
+  </li>`;
+}
+
 function renderFamilyNearby() {
   state._nearbyFromEntrance = false;
-  els.sheetTitle.textContent = '지금 근처';
+  els.sheetTitle.textContent = '근처';
   const ref = nearbyReferencePoint();
-  let body = `<div class="emergency-row" role="group" aria-label="긴급 빠른 버튼">
-    <button class="btn emerg-btn" data-act="show-entrances" type="button">입구</button>
-    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="restroom" type="button">가까운 화장실</button>
-    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="firstAid" type="button">중앙구호실</button>
-    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="baby" type="button">베이비케어·수유실</button>
-    <button class="btn emerg-btn" data-act="meetup-view" type="button">가족 집결지</button>
+  const from = ref.from;
+  const entranceRef = parkMeta().entranceCoordinates;
+  const distFrom = from || (ref.mode === 'outside' || ref.mode === 'noloc' ? null : entranceRef);
+
+  let body = '';
+  if (ref.mode === 'noloc') {
+    body += `<div class="notice"><p>직선거리를 보려면 현재 위치가 필요합니다. 메인 입구·집결지는 위치 없이도 열 수 있어요.</p></div>`;
+  } else if (ref.mode === 'outside') {
+    body += `<div class="notice"><p>현재 위치가 파크 밖입니다. 긴 직선거리는 표시하지 않습니다.</p>
+      <button class="btn" data-act="nearby-from-entrance" type="button">정문 기준으로 거리 보기</button></div>`;
+  } else {
+    body += `<p class="muted small">현재 위치 기준 직선거리입니다. 실제 이동거리는 다를 수 있어요.</p>`;
+  }
+
+  const restroom = from ? nearestFacility('restroom', from) : null;
+  const firstAid = from ? nearestFacility('firstAid', from) : null;
+  const baby = from ? nearestFacility('baby', from) : null;
+  const main = getMainEntrance(state.park);
+  const meetup = store.getMeetup(state.park);
+
+  body += `<ul class="poi-list nearby-list">`;
+  body += nearbyQuickRow({
+    title: restroom ? (restroom.nameKo || '가장 가까운 화장실') : '가장 가까운 화장실',
+    meta: restroom ? nearbyDistLabel(distFrom, restroom.coordinates) : (from ? '근처에 없음' : '위치 필요'),
+    mapPoi: restroom?.id,
+    directionPoi: restroom?.id,
+    disabledNote: !restroom && from ? null : null,
+  });
+  body += nearbyQuickRow({
+    title: firstAid ? (firstAid.nameKo || '가장 가까운 구호실') : '가장 가까운 구호실',
+    meta: firstAid ? nearbyDistLabel(distFrom, firstAid.coordinates) : (from ? '근처에 없음' : '위치 필요'),
+    mapPoi: firstAid?.id,
+    directionPoi: firstAid?.id,
+  });
+  body += nearbyQuickRow({
+    title: baby ? (baby.nameKo || '가장 가까운 수유실') : '가장 가까운 수유실',
+    meta: baby ? nearbyDistLabel(distFrom, baby.coordinates) : (from ? '근처에 없음' : '위치 필요'),
+    mapPoi: baby?.id,
+    directionPoi: baby?.id,
+  });
+  body += nearbyQuickRow({
+    title: main ? (main.nameKo || '메인 입구') : '메인 입구',
+    meta: main ? nearbyDistLabel(from, main.coordinates) : '데이터 없음',
+    mapAct: 'focus-main-entrance',
+    mapPoi: main?.id,
+    directionPoi: main?.id,
+  });
+  if (meetup && meetup.coordinates) {
+    body += `<li class="nearby-item">
+      <div class="nearby-main">
+        <strong class="nearby-name">${ui.esc(meetup.label || '가족 집결지')}</strong>
+        <span class="li-meta">${ui.esc(nearbyDistLabel(from, meetup.coordinates))}</span>
+      </div>
+      <div class="nearby-actions">
+        <button class="btn btn-primary" data-act="meetup-view" type="button">지도에서 보기</button>
+        <button class="btn" data-act="meetup-direction" type="button">방향 보기</button>
+      </div>
+    </li>`;
+  } else {
+    body += nearbyQuickRow({
+      title: '가족 집결지',
+      meta: '아직 저장되지 않음 · 설정에서 지정할 수 있어요',
+      mapAct: 'meetup-view',
+    });
+  }
+  body += `<li class="nearby-item">
+    <div class="nearby-main">
+      <strong class="nearby-name">현재 위치 다시 찾기</strong>
+      <span class="li-meta">${ref.mode === 'user' ? '위치가 켜져 있습니다' : '위치 권한·GPS를 다시 요청합니다'}</span>
+    </div>
+    <div class="nearby-actions">
+      <button class="btn btn-primary" data-act="request-location" type="button">현재 위치 다시 찾기</button>
+    </div>
+  </li>`;
+  body += `</ul>`;
+
+  body += `<div class="chips" role="group" aria-label="입구 안내">
+    <button class="chip ${state.entranceDetail ? 'chip-on' : ''}" data-act="toggle-entrance-detail" type="button" aria-pressed="${state.entranceDetail ? 'true' : 'false'}">
+      ${state.entranceDetail ? '입구 주변 안내 켜짐' : '입구 주변 안내'}
+    </button>
+  </div>
+  <p class="muted small">입구 주변 안내를 켜면 프리게이트·스테이션 아이콘이 표시됩니다. 게이트선은 확대 18 이상에서만 보입니다.</p>`;
+
+  // Keep restroom tab discoverable without duplicating the map FAB.
+  body += `<div class="detail-actions">
+    <button class="btn" data-act="open-restrooms" type="button">화장실 탭 열기</button>
   </div>`;
 
-  if (ref.mode === 'noloc') {
-    body += `<div class="notice"><p>주변 시설을 보려면 현재 위치가 필요합니다.</p>
-      <button class="btn btn-primary" data-act="request-location" type="button">위치 권한 요청</button></div>`;
-    els.sheetBody.innerHTML = body;
-    return;
-  }
-  if (ref.mode === 'outside') {
-    body += `<div class="notice">
-      <p>현재 위치가 파크 밖입니다. 긴 직선거리는 계산하지 않습니다.</p>
-      <button class="btn btn-primary" data-act="nearby-from-entrance" type="button">파크 정문 기준으로 보기</button>
-    </div>`;
-    els.sheetBody.innerHTML = body;
-    return;
-  }
-
-  const from = ref.from;
-  const sections = buildNearbySections({
-    from,
-    attractions: getAttractions(state.park),
-    facilities: visibleFacilities(),
-    children: store.getChildren(),
-    visitDate: store.getVisitDate(),
-    limit: 3,
-  });
-  body += `<p class="muted small">현재 위치 기준 직선거리 순입니다. 실제 이동거리는 다를 수 있습니다.</p>`;
-  for (const sec of sections) {
-    body += `<h3 class="sheet-h3">${ui.esc(sec.title)}</h3>`;
-    if (!sec.items.length) {
-      body += ui.emptyState('근처에 표시할 항목이 없습니다.');
-      continue;
-    }
-    body += `<ul class="poi-list nearby-list">${sec.items.map((p) => `
-      <li class="nearby-item">
-        <div class="nearby-main">
-          <strong class="nearby-name">${ui.esc(p.nameKo || p.name)}</strong>
-          <span class="li-meta">${ui.esc(p.areaNameKo || '')} · 직선 ${ui.esc(p._distLabel)} · 신뢰도 ${ui.esc(p._trust)}${p._closedOnVisit ? ' · 방문일 휴장' : ''}</span>
-        </div>
-        <div class="nearby-actions">
-          <button class="btn" data-poi="${ui.esc(p.id)}" type="button">상세 보기</button>
-          <button class="btn" data-act="direction" data-poi="${ui.esc(p.id)}" type="button">방향 보기</button>
-        </div>
-      </li>`).join('')}</ul>`;
-  }
   els.sheetBody.innerHTML = body;
+  syncNearbyFab();
 }
 
 function renderSearch() {
@@ -916,7 +1082,7 @@ function openSheetPanel(tab) {
 
 function openTab(tab) {
   if (tab === 'map') {
-    state.layerMode = 'all';
+    state.layerMode = 'map';
     closeSheet();
     return;
   }
@@ -948,11 +1114,11 @@ function closeSheet() {
   syncNav();
 }
 
-/** Bottom category toggle: same tab while its list is open → layer none; else open list. */
+/** Bottom category toggle: same tab while its list is open → back to sparse map. */
 function toggleLayerTab(tab) {
   if (state.query) { state.query = ''; els.search.value = ''; }
   if (tab === 'map') {
-    state.layerMode = 'all';
+    state.layerMode = 'map';
     closeSheet();
     renderMap();
     syncLabelOptions();
@@ -964,9 +1130,9 @@ function toggleLayerTab(tab) {
     openSheetPanel('settings');
     return;
   }
-  // Second click on the open category list → hide that layer + close panel.
+  // Second click on the open category → hide that layer and return to sparse map.
   if (state.layerMode === tab && state.tab === tab) {
-    state.layerMode = 'none';
+    state.layerMode = 'map';
     closeSheet();
     renderMap();
     syncLabelOptions();
@@ -986,14 +1152,14 @@ function syncNav() {
   els.nav.querySelectorAll('button').forEach((b) => {
     const tab = b.dataset.tab;
     let on = false;
-    if (tab === 'map') on = state.layerMode === 'all';
+    if (tab === 'map') on = state.layerMode === 'map' || state.layerMode === 'none' || state.layerMode === 'all';
     else if (tab === 'attractions' || tab === 'restrooms' || tab === 'favorites') on = state.layerMode === tab;
     else if (tab === 'settings') on = state.tab === 'settings';
     b.classList.toggle('nav-on', on);
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
-  if (els.nearbyBtn) els.nearbyBtn.classList.toggle('on', state.tab === 'familyNearby');
+  syncNearbyFab();
 }
 
 function selectPoi(id) {
@@ -1004,7 +1170,8 @@ function selectPoi(id) {
   state.selectedId = id;
   const poi = getPoiById(state.park, id);
   if (poi && poi.coordinates) map.focusPoi(poi.coordinates, 17);
-  map.highlight(id);
+  // Re-render so selected marker gets name label + family badge; aux entrances expand label.
+  renderMap();
   syncLabelOptions();
   state.tab = 'detail';
   els.sheet.classList.add('open');
@@ -1595,45 +1762,15 @@ function jumpNearest(kind) {
 }
 
 function showNearbyFromEntrance() {
+  // Reuse the compact nearby sheet with entrance coordinates as distance origin.
   const from = parkMeta().entranceCoordinates;
-  if (!from) return;
-  const sections = buildNearbySections({
-    from,
-    attractions: getAttractions(state.park),
-    facilities: visibleFacilities(),
-    children: store.getChildren(),
-    visitDate: store.getVisitDate(),
-    limit: 3,
-  });
-  els.sheetTitle.textContent = '지금 근처 (정문 기준)';
-  let body = `<p class="muted small">파크 정문 기준 직선거리 순입니다. 실제 이동거리는 다를 수 있습니다.</p>`;
-  body += `<div class="emergency-row" role="group" aria-label="긴급 빠른 버튼">
-    <button class="btn emerg-btn" data-act="show-entrances" type="button">입구</button>
-    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="restroom" type="button">가까운 화장실</button>
-    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="firstAid" type="button">중앙구호실</button>
-    <button class="btn emerg-btn" data-act="nearby-jump" data-nearby="baby" type="button">베이비케어·수유실</button>
-    <button class="btn emerg-btn" data-act="meetup-view" type="button">가족 집결지</button>
-  </div>`;
-  for (const sec of sections) {
-    body += `<h3 class="sheet-h3">${ui.esc(sec.title)}</h3>`;
-    if (!sec.items.length) { body += ui.emptyState('표시할 항목이 없습니다.'); continue; }
-    body += `<ul class="poi-list nearby-list">${sec.items.map((p) => `
-      <li class="nearby-item">
-        <div class="nearby-main">
-          <strong class="nearby-name">${ui.esc(p.nameKo || p.name)}</strong>
-          <span class="li-meta">${ui.esc(p.areaNameKo || '')} · 직선 ${ui.esc(p._distLabel)} · 신뢰도 ${ui.esc(p._trust)}${p._closedOnVisit ? ' · 방문일 휴장' : ''}</span>
-        </div>
-        <div class="nearby-actions">
-          <button class="btn" data-poi="${ui.esc(p.id)}" type="button">상세 보기</button>
-          <button class="btn" data-act="direction" data-poi="${ui.esc(p.id)}" type="button">방향 보기</button>
-        </div>
-      </li>`).join('')}</ul>`;
-  }
-  // Temporarily override nearest jump to use entrance
-  state.user = state.user; // keep
-  els.sheetBody.innerHTML = body;
-  // Store entrance as temporary reference for jump buttons in this view
+  if (!from) { toast('정문 좌표가 없습니다'); return; }
+  const savedUser = state.user;
+  state.user = { coords: from, accuracy: null };
+  renderFamilyNearby();
+  state.user = savedUser;
   state._nearbyFromEntrance = true;
+  els.sheetTitle.textContent = '근처 (정문 기준)';
 }
 
 function currentShareSnapshot() {
@@ -1815,26 +1952,15 @@ function bindEvents() {
   });
 
   els.locBtn.addEventListener('click', toggleLocation);
-  if (els.nearbyBtn) {
-    els.nearbyBtn.addEventListener('click', () => {
-      if (state.tab === 'familyNearby') closeSheet();
-      else openSheetPanel('familyNearby');
-    });
-  }
   if (els.mapFab) {
     els.mapFab.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-fab]');
       if (!b) return;
-      const act = b.dataset.fab;
-      if (act === 'nearby') {
+      if (b.dataset.fab === 'nearby') {
         if (state.tab === 'familyNearby') closeSheet();
         else openSheetPanel('familyNearby');
-      } else if (act === 'entrance') showEntrancesOverview();
-      else if (act === 'gate') focusMainEntrance();
-      else if (act === 'restroom') jumpNearest('restroom');
-      else if (act === 'firstAid') jumpNearest('firstAid');
-      else if (act === 'baby') jumpNearest('baby');
-      else if (act === 'meetup') viewMeetup();
+        syncNearbyFab();
+      }
     });
   }
 
@@ -1933,6 +2059,12 @@ function bindEvents() {
       if (a === 'meetup-set-poi') setMeetupFromPoi(id);
       if (a === 'show-entrances') showEntrancesOverview();
       if (a === 'focus-main-entrance') focusMainEntrance();
+      if (a === 'toggle-entrance-detail') {
+        toggleEntranceDetailMode();
+        if (state.tab === 'familyNearby') renderFamilyNearby();
+      }
+      if (a === 'open-attractions') openTab('attractions');
+      if (a === 'open-restrooms') openTab('restrooms');
       if (a === 'focus-entrance') {
         const ent = getPoiById(state.park, id);
         if (ent && ent.coordinates) {
@@ -2048,15 +2180,15 @@ function bindEvents() {
       renderMap();
     }
     if (e.target.id === 'set-park-boundaries') {
-      store.setSettings({ showParkBoundaries: e.target.checked });
+      store.setSettings({ showParkBoundaries: !!e.target.checked });
       renderMap();
     }
     if (e.target.id === 'set-pregate-boundary') {
-      store.setSettings({ showPregateBoundary: e.target.checked });
+      store.setSettings({ showPregateBoundary: !!e.target.checked });
       renderMap();
     }
     if (e.target.id === 'set-boundary-labels') {
-      store.setSettings({ showBoundaryLabels: e.target.checked });
+      store.setSettings({ showBoundaryLabels: !!e.target.checked });
       renderMap();
     }
     if (e.target.id === 'set-pregate') {

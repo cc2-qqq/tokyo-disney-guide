@@ -52,6 +52,9 @@ export function createMapController(elId) {
     landmark: new Set(),
     selectedId: null,
     favIds: new Set(),
+    visitIds: new Set(),
+    nextVisitId: null,
+    directionId: null,
     mapLabelMode: LABEL_MODES.KO_FIRST,
   };
   let meetupMarker = null;
@@ -61,9 +64,9 @@ export function createMapController(elId) {
   let entranceMarkers = new Map();
   let lastEntranceRender = null;
   let boundaryOpts = {
-    showParkBoundaries: true,
-    showPregateBoundary: true,
-    showBoundaryLabels: true,
+    showParkBoundaries: false,
+    showPregateBoundary: false,
+    showBoundaryLabels: false,
     dimmed: false,
   };
   let currentBoundaries = null;
@@ -232,14 +235,33 @@ export function createMapController(elId) {
   }
 
   function makeIcon(poi, selected, rideBadge) {
+    // Sparse default map: numbered visit-order markers (no name plates).
+    if (poi._useVisitMarker && poi._visitOrder != null) {
+      const cls = [
+        'marker', 'is-visit',
+        selected ? 'is-selected' : '',
+        poi._visitMust ? 'is-must' : '',
+        poi._visitDone ? 'is-done' : '',
+        poi._isNext ? 'is-next' : '',
+      ].filter(Boolean).join(' ');
+      const star = poi._visitMust ? '<span class="visit-star" aria-hidden="true">★</span>' : '';
+      const html = `<div class="${cls}" aria-hidden="true">${escapeHtml(String(poi._visitOrder))}${star}</div>`;
+      return L.divIcon({
+        html,
+        className: 'marker-wrap',
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      });
+    }
     const spec = ICONS[poi.type] || ICONS.attraction;
     let trustCls = '';
     if (poi.coordinateStatus === 'medium_estimated') trustCls = 'is-medium';
     else if (poi.coordinateStatus === 'low_estimated') trustCls = 'is-low is-approx';
+    const nearestCls = poi._isNearest ? 'is-nearest' : '';
     const badge = rideBadge
       ? `<span class="m-ride-badge" aria-hidden="true">${escapeHtml(rideBadge)}</span>`
       : '';
-    const html = `<div class="marker ${spec.cls} ${selected ? 'is-selected' : ''} ${trustCls}" aria-hidden="true"><span class="marker-glyph">${spec.glyph}</span>${badge}</div>`;
+    const html = `<div class="marker ${spec.cls} ${selected ? 'is-selected' : ''} ${trustCls} ${nearestCls}" aria-hidden="true"><span class="marker-glyph">${spec.glyph}</span>${badge}</div>`;
     return L.divIcon({
       html,
       className: 'marker-wrap',
@@ -254,9 +276,11 @@ export function createMapController(elId) {
     const badges = rideBadges || {};
     for (const poi of pois) {
       if (!poi.coordinates) continue;
+      const selected = poi.id === selectedId;
       const m = L.marker(poi.coordinates, {
-        icon: makeIcon(poi, poi.id === selectedId, badges[poi.id]),
+        icon: makeIcon(poi, selected, badges[poi.id]),
         keyboard: true,
+        zIndexOffset: poi._isNearest ? 700 : (poi._isNext ? 650 : (poi._visitOrder != null ? 500 : 400)),
         title: poi.nameKo || poi.name,
         alt: `${(ICONS[poi.type] || {}).label || ''} ${poi.nameKo || poi.name}`,
       });
@@ -288,19 +312,39 @@ export function createMapController(elId) {
     }
   }
 
-  function entranceIcon(ent, selected) {
+  function entranceIcon(ent, selected, { heroMain = false } = {}) {
     const kind = ent.entranceKind || 'main_entrance';
     const tier = kind === 'main_entrance' ? 'main'
       : kind === 'pre_gate' ? 'pregate'
         : 'station';
-    const html = `<div class="entrance-marker is-${tier} ${selected ? 'is-selected' : ''}" aria-hidden="true">
-      <span class="entrance-glyph">入</span>
-      <span class="entrance-label">${escapeHtml(ent.nameKo || '입구')}</span>
+    const zoom = map ? map.getZoom() : 16;
+    // Main: hero in entrance mode or when selected; otherwise compact (quiet on category maps).
+    const mainHero = tier === 'main' && (heroMain || selected);
+    const compact = tier === 'main' ? !mainHero : !selected;
+    const glyph = tier === 'station' ? '駅' : '入';
+    let labelHtml = '';
+    if (tier === 'main') {
+      if (mainHero) {
+        labelHtml = `<span class="entrance-label">${escapeHtml(ent.nameKo || '입구')}</span>`;
+      } else if (zoom >= 17) {
+        labelHtml = '<span class="entrance-label entrance-label-short">입구</span>';
+      }
+    } else if (selected) {
+      labelHtml = `<span class="entrance-label">${escapeHtml(ent.nameKo || '입구')}</span>`;
+    }
+    const sizeCls = mainHero ? 'is-hero' : (tier === 'main' ? 'is-quiet' : '');
+    const html = `<div class="entrance-marker is-${tier} ${compact ? 'compact' : ''} ${sizeCls} ${selected ? 'is-selected' : ''}" aria-hidden="true">
+      <span class="entrance-glyph">${glyph}</span>
+      ${labelHtml}
     </div>`;
     const sizes = {
-      main: { size: [124, 44], anchor: [62, 22] },
-      pregate: { size: [72, 26], anchor: [36, 13] },
-      station: { size: [58, 22], anchor: [29, 11] },
+      main: mainHero
+        ? { size: [124, 44], anchor: [62, 22] }
+        : (labelHtml
+          ? { size: [44, 36], anchor: [22, 18] }
+          : { size: [28, 28], anchor: [14, 14] }),
+      pregate: compact ? { size: [28, 28], anchor: [14, 14] } : { size: [96, 36], anchor: [48, 18] },
+      station: compact ? { size: [28, 28], anchor: [14, 14] } : { size: [96, 36], anchor: [48, 18] },
     };
     const s = sizes[tier] || sizes.station;
     return L.divIcon({
@@ -311,23 +355,26 @@ export function createMapController(elId) {
     });
   }
 
-  function renderEntrances(entrances, { onSelect, selectedId, show = true } = {}) {
+  function renderEntrances(entrances, {
+    onSelect, selectedId, show = true, showAux = false, heroMain = false,
+  } = {}) {
     if (!entranceGroup) return;
-    lastEntranceRender = { entrances, opts: { onSelect, selectedId, show } };
+    lastEntranceRender = { entrances, opts: { onSelect, selectedId, show, showAux, heroMain } };
     entranceGroup.clearLayers();
     entranceMarkers = new Map();
     if (!show) return;
-    const zByKind = { main_entrance: 740, pre_gate: 660, station_side: 620 };
-    const z = map ? map.getZoom() : 16;
     for (const ent of entrances || []) {
       if (!ent.coordinates) continue;
-      // Skip tiny aux markers until zoomed in so they don't merge into one blob.
       const kind = ent.entranceKind || 'main_entrance';
-      if (kind !== 'main_entrance' && z < 17) continue;
+      // Default map: main entrance only. Aux markers only in entrance detail mode.
+      if (kind !== 'main_entrance' && !showAux) continue;
+      const selected = ent.id === selectedId;
+      const mainHero = kind === 'main_entrance' && (heroMain || selected);
+      const z = mainHero ? 740 : (kind === 'main_entrance' ? 420 : (kind === 'pre_gate' ? 660 : 620));
       const m = L.marker(ent.coordinates, {
-        icon: entranceIcon(ent, ent.id === selectedId),
+        icon: entranceIcon(ent, selected, { heroMain }),
         keyboard: true,
-        zIndexOffset: zByKind[kind] || 620,
+        zIndexOffset: z,
         title: ent.nameKo || '입구',
         alt: ent.nameKo || '입구',
       });
@@ -350,102 +397,105 @@ export function createMapController(elId) {
     return [lat / ring.length, lng / ring.length];
   }
 
+  function renderGateCues(opacityMul) {
+    if (!currentBoundaries || !boundaryOpts.showPregateBoundary) return;
+    // Gate line / approach arrow only at zoom 18+ so they don't crowd the main entrance label.
+    const zoom = map ? map.getZoom() : 0;
+    if (zoom < 18) return;
+    const gate = currentBoundaries.gateLine;
+    if (gate && Array.isArray(gate.latlngs) && gate.latlngs.length >= 2) {
+      L.polyline(gate.latlngs, {
+        pane: 'boundaries',
+        interactive: false,
+        color: '#b33d12',
+        weight: 4,
+        opacity: 0.9 * opacityMul,
+        lineCap: 'square',
+      }).addTo(boundaryGroup);
+    }
+    const arrow = currentBoundaries.approachArrow;
+    if (arrow && Array.isArray(arrow.latlngs) && arrow.latlngs.length >= 2) {
+      L.polyline(arrow.latlngs, {
+        pane: 'boundaries',
+        interactive: false,
+        color: '#b33d12',
+        weight: 3,
+        opacity: 0.85 * opacityMul,
+        dashArray: null,
+      }).addTo(boundaryGroup);
+      const tip = arrow.latlngs[arrow.latlngs.length - 1];
+      const glyph = arrow.glyph || '▼';
+      L.marker(tip, {
+        icon: L.divIcon({
+          html: `<div class="gate-cue" aria-hidden="true">
+              <span class="gate-cue-label">${escapeHtml(arrow.label || '여기서 입장')}</span>
+              <span class="gate-cue-arrow">${escapeHtml(glyph)}</span>
+            </div>`,
+          className: 'gate-cue-wrap',
+          iconSize: [96, 40],
+          iconAnchor: [48, 38],
+        }),
+        pane: 'labels',
+        interactive: false,
+        keyboard: false,
+      }).addTo(boundaryLabelGroup);
+    }
+  }
+
   function renderBoundaries() {
     if (!map || !boundaryGroup) return;
     boundaryGroup.clearLayers();
     if (boundaryLabelGroup) boundaryLabelGroup.clearLayers();
-    if (!currentBoundaries || !boundaryOpts.showParkBoundaries) return;
+    if (!currentBoundaries) return;
 
     const zoom = map.getZoom();
     const dim = !!boundaryOpts.dimmed;
     const opacityMul = dim ? 0.35 : 1;
 
-    // Display guest-orientation outline only (never raw OSM audit geometry).
-    const parkOutline = currentBoundaries.guestAreaOutline
-      || currentBoundaries.parkOutline
-      || currentBoundaries.parkOuterBoundary;
-    const ring = parkOutline && Array.isArray(parkOutline.ring) ? parkOutline.ring : null;
-    // Park maps usually minZoom=16; still draw from 15 so outline remains if framing expands.
-    if (!ring || ring.length < 3 || zoom < 15) return;
-
-    const thin = dim;
-    // Stroke-only guest outline (no fill, no inverse mask, no paidAreaOutline).
-    const weight = thin ? 2 : (zoom >= 18 ? 3 : 2.5);
-
-    L.polyline([...ring, ring[0]], {
-      pane: 'boundaries',
-      interactive: false,
-      color: '#1a5a7a',
-      weight,
-      opacity: (thin ? 0.75 : 0.95) * opacityMul,
-      lineJoin: 'round',
-      lineCap: 'round',
-      className: 'park-outline-stroke',
-      fill: false,
-    }).addTo(boundaryGroup);
-
-    if (boundaryOpts.showBoundaryLabels && !dim && zoom >= 17) {
-      const c = ringCentroid(ring);
-      const label = parkOutline.label || '파크 영역(안내용)';
-      const detail = parkOutline.detail
-        || '일반 게스트 이용구역을 이해하기 위한 안내용 경계입니다. 공식·법적 경계가 아니며 실제 운영구역은 현장 안내를 따라 주세요.';
-      if (c) {
-        L.marker(c, {
-          icon: L.divIcon({
-            html: `<span class="boundary-label" title="${escapeHtml(detail)}">${escapeHtml(label)}</span>`,
-            className: 'boundary-label-wrap',
-            iconSize: [0, 0],
-            iconAnchor: [0, 0],
-          }),
-          pane: 'labels',
+    // Park outline: only when enabled AND zoom 15–16 (hidden at 17+ for declutter).
+    if (boundaryOpts.showParkBoundaries && zoom >= 15 && zoom < 17) {
+      const parkOutline = currentBoundaries.guestAreaOutline
+        || currentBoundaries.parkOutline
+        || currentBoundaries.parkOuterBoundary;
+      const ring = parkOutline && Array.isArray(parkOutline.ring) ? parkOutline.ring : null;
+      if (ring && ring.length >= 3) {
+        L.polyline([...ring, ring[0]], {
+          pane: 'boundaries',
           interactive: false,
-          keyboard: false,
-        }).addTo(boundaryLabelGroup);
+          color: '#1a5a7a',
+          weight: dim ? 2 : 2.5,
+          opacity: (dim ? 0.75 : 0.95) * opacityMul,
+          lineJoin: 'round',
+          lineCap: 'round',
+          className: 'park-outline-stroke',
+          fill: false,
+        }).addTo(boundaryGroup);
+
+        // Labels off by default; if user enables, keep them on the same zoom band only.
+        if (boundaryOpts.showBoundaryLabels && !dim) {
+          const c = ringCentroid(ring);
+          const label = parkOutline.label || '파크 영역(안내용)';
+          const detail = parkOutline.detail
+            || '일반 게스트 이용구역을 이해하기 위한 안내용 경계입니다. 공식·법적 경계가 아니며 실제 운영구역은 현장 안내를 따라 주세요.';
+          if (c) {
+            L.marker(c, {
+              icon: L.divIcon({
+                html: `<span class="boundary-label" title="${escapeHtml(detail)}">${escapeHtml(label)}</span>`,
+                className: 'boundary-label-wrap',
+                iconSize: [0, 0],
+                iconAnchor: [0, 0],
+              }),
+              pane: 'labels',
+              interactive: false,
+              keyboard: false,
+            }).addTo(boundaryLabelGroup);
+          }
+        }
       }
     }
 
-    // Ticket-gate line + approach arrow (no filled entranceZone polygon).
-    if (boundaryOpts.showPregateBoundary && zoom >= 17) {
-      const gate = currentBoundaries.gateLine;
-      if (gate && Array.isArray(gate.latlngs) && gate.latlngs.length >= 2) {
-        L.polyline(gate.latlngs, {
-          pane: 'boundaries',
-          interactive: false,
-          color: '#b33d12',
-          weight: 4,
-          opacity: 0.9 * opacityMul,
-          lineCap: 'square',
-        }).addTo(boundaryGroup);
-      }
-      const arrow = currentBoundaries.approachArrow;
-      if (arrow && Array.isArray(arrow.latlngs) && arrow.latlngs.length >= 2) {
-        L.polyline(arrow.latlngs, {
-          pane: 'boundaries',
-          interactive: false,
-          color: '#b33d12',
-          weight: 3,
-          opacity: 0.85 * opacityMul,
-          dashArray: null,
-        }).addTo(boundaryGroup);
-        const tip = arrow.latlngs[arrow.latlngs.length - 1];
-        const glyph = arrow.glyph || '▼';
-        // Label first, then arrow glyph so the tip reads as the entry direction.
-        L.marker(tip, {
-          icon: L.divIcon({
-            html: `<div class="gate-cue" aria-hidden="true">
-              <span class="gate-cue-label">${escapeHtml(arrow.label || '여기서 입장')}</span>
-              <span class="gate-cue-arrow">${escapeHtml(glyph)}</span>
-            </div>`,
-            className: 'gate-cue-wrap',
-            iconSize: [96, 40],
-            iconAnchor: [48, 38],
-          }),
-          pane: 'labels',
-          interactive: false,
-          keyboard: false,
-        }).addTo(boundaryLabelGroup);
-      }
-    }
+    // Gate line / approach arrow are independent of park-outline visibility.
+    renderGateCues(opacityMul);
   }
 
   function highlight(id) {
@@ -676,9 +726,14 @@ export function createMapController(elId) {
     renderLabels();
   }
 
-  function setLabelOptions({ selectedId, favIds, mapLabelMode, category } = {}) {
+  function setLabelOptions({
+    selectedId, favIds, visitIds, nextVisitId, directionId, mapLabelMode, category,
+  } = {}) {
     if (selectedId !== undefined) labelState.selectedId = selectedId;
     if (favIds !== undefined) labelState.favIds = favIds instanceof Set ? favIds : new Set(favIds || []);
+    if (visitIds !== undefined) labelState.visitIds = visitIds instanceof Set ? visitIds : new Set(visitIds || []);
+    if (nextVisitId !== undefined) labelState.nextVisitId = nextVisitId || null;
+    if (directionId !== undefined) labelState.directionId = directionId || null;
     if (mapLabelMode !== undefined) labelState.mapLabelMode = mapLabelMode;
     if (category !== undefined) labelState.category = category;
     renderLabels();
@@ -733,68 +788,49 @@ export function createMapController(elId) {
     if (zoom >= 16) {
       for (const ar of s.areas) {
         if (!ar.labelCenter) continue;
+        // Pregate is shown via entrance markers in entrance detail mode — not as an area label.
+        if (ar.id === 'pregate') continue;
         out.push({
           key: 'area:' + ar.id, kind: 'area', latlng: ar.labelCenter,
           text: jaOnly ? (ar.nameJa || ar.nameEn || ar.nameKo) : ar.nameKo,
-          sub: null, priority: 2,
+          sub: null, priority: 4,
         });
       }
     }
     const cat = s.category || 'map';
-    const hideAttrLabels = cat === 'restrooms' || cat === 'none';
-    const hideNonFavAttr = cat === 'favorites';
     const attractionsOnly = cat === 'attractions';
+    const sparseMap = cat === 'map';
+    // App POI name labels: selected / direction / next-visit only (never mass labels).
+    const namedIds = new Set();
+    if (s.selectedId) namedIds.add(s.selectedId);
+    if (s.directionId) namedIds.add(s.directionId);
+    if (sparseMap && s.nextVisitId) namedIds.add(s.nextVisitId);
 
-    // App attraction labels (vector attraction names are hidden in basemap).
-    const showRep = zoom >= 16;
-    const showAll = zoom >= 17;
-    if (!hideAttrLabels) {
-      for (const at of s.attractions) {
-        if (!at.coordinates) continue;
-        if ((at.operatingStatus || 'operating') !== 'operating') continue;
-        if (hideNonFavAttr && !s.favIds.has(at.id)) continue;
-        const isFav = s.favIds.has(at.id);
-        const isRep = s.landmark.has(at.id);
-        let include = false; let priority = 5;
-        if (attractionsOnly) {
-          // Attractions tab: show Korean attraction labels (rep at 16+, all at 17+).
-          if (isRep && showRep) { include = true; priority = 4; }
-          if (showAll || zoom >= 16) { include = true; priority = Math.min(priority, 5); }
-        } else {
-          if (isFav && zoom >= 16) { include = true; priority = 3; }
-          if (isRep && showRep) { include = true; priority = Math.min(priority, 4); }
-          if (showAll) { include = true; priority = Math.min(priority, 5); }
-        }
-        if (include) {
-          out.push({
-            key: 'at:' + at.id, kind: 'attr', latlng: at.coordinates,
-            text: mainText(at), sub: subText(at), priority,
-          });
-        }
-      }
+    function pushNamed(poi, priority, selected) {
+      if (!poi || !poi.coordinates) return;
+      const isAttr = poi.type === 'attraction';
+      out.push({
+        key: (isAttr ? 'at:' : 'fac:') + poi.id,
+        kind: isAttr ? 'attr' : 'facility',
+        latlng: poi.coordinates,
+        text: mainText(poi),
+        sub: subText(poi),
+        priority,
+        selected: !!selected,
+      });
     }
-    // Selected POI always shown (including layerMode none — search/detail exception).
-    if (s.selectedId) {
-      const sel = s.attractions.find((a) => a.id === s.selectedId)
-        || s.facilities.find((f) => f.id === s.selectedId);
-      if (sel && sel.coordinates) {
-        const isAttr = sel.type === 'attraction';
-        const allowed = cat === 'none' || cat === 'map' ? true
-          : attractionsOnly ? isAttr
-            : cat === 'restrooms' ? (sel.type === 'restroom' || sel.type === 'babyCare')
-              : cat === 'favorites' ? s.favIds.has(sel.id)
-                : true;
-        if (allowed) {
-          out.push({
-            key: (isAttr ? 'at:' : 'fac:') + sel.id,
-            kind: isAttr ? 'attr' : 'facility',
-            latlng: sel.coordinates,
-            text: mainText(sel),
-            sub: subText(sel),
-            priority: 1, selected: true,
-          });
-        }
-      }
+
+    for (const id of namedIds) {
+      const poi = s.attractions.find((a) => a.id === id)
+        || s.facilities.find((f) => f.id === id);
+      if (!poi) continue;
+      if (attractionsOnly && poi.type !== 'attraction') continue;
+      if (cat === 'restrooms' && poi.type !== 'restroom' && poi.type !== 'babyCare') continue;
+      if (cat === 'favorites' && !s.favIds.has(poi.id) && id !== s.selectedId && id !== s.directionId) continue;
+      if (cat === 'none' && id !== s.selectedId && id !== s.directionId) continue;
+      const selected = id === s.selectedId;
+      const priority = selected ? 1 : (id === s.directionId ? 1.5 : 2);
+      pushNamed(poi, priority, selected);
     }
     // de-dup by key, keep the lowest-priority (most important) instance
     const byKey = new Map();
