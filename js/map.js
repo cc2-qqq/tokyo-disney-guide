@@ -59,6 +59,7 @@ export function createMapController(elId) {
   let boundaryGroup = null;
   let boundaryLabelGroup = null;
   let entranceMarkers = new Map();
+  let lastEntranceRender = null;
   let boundaryOpts = {
     showParkBoundaries: true,
     showPregateBoundary: true,
@@ -175,7 +176,11 @@ export function createMapController(elId) {
     lp.style.pointerEvents = 'none';
     labelGroup = L.layerGroup().addTo(map);
 
-    map.on('zoomend moveend', () => { renderLabels(); renderBoundaries(); });
+    map.on('zoomend moveend', () => {
+      renderLabels();
+      renderBoundaries();
+      if (lastEntranceRender) renderEntrances(lastEntranceRender.entrances, lastEntranceRender.opts);
+    });
     if (parkMeta.defaultBounds) {
       map.fitBounds(L.latLngBounds(parkMeta.defaultBounds), { animate: false });
     }
@@ -293,9 +298,9 @@ export function createMapController(elId) {
       <span class="entrance-label">${escapeHtml(ent.nameKo || '입구')}</span>
     </div>`;
     const sizes = {
-      main: { size: [118, 42], anchor: [59, 21] },
-      pregate: { size: [96, 34], anchor: [48, 17] },
-      station: { size: [78, 28], anchor: [39, 14] },
+      main: { size: [124, 44], anchor: [62, 22] },
+      pregate: { size: [72, 26], anchor: [36, 13] },
+      station: { size: [58, 22], anchor: [29, 11] },
     };
     const s = sizes[tier] || sizes.station;
     return L.divIcon({
@@ -308,16 +313,21 @@ export function createMapController(elId) {
 
   function renderEntrances(entrances, { onSelect, selectedId, show = true } = {}) {
     if (!entranceGroup) return;
+    lastEntranceRender = { entrances, opts: { onSelect, selectedId, show } };
     entranceGroup.clearLayers();
     entranceMarkers = new Map();
     if (!show) return;
-    const zByKind = { main_entrance: 720, pre_gate: 680, station_side: 640 };
+    const zByKind = { main_entrance: 740, pre_gate: 660, station_side: 620 };
+    const z = map ? map.getZoom() : 16;
     for (const ent of entrances || []) {
       if (!ent.coordinates) continue;
+      // Skip tiny aux markers until zoomed in so they don't merge into one blob.
+      const kind = ent.entranceKind || 'main_entrance';
+      if (kind !== 'main_entrance' && z < 17) continue;
       const m = L.marker(ent.coordinates, {
         icon: entranceIcon(ent, ent.id === selectedId),
         keyboard: true,
-        zIndexOffset: zByKind[ent.entranceKind] || 640,
+        zIndexOffset: zByKind[kind] || 620,
         title: ent.nameKo || '입구',
         alt: ent.nameKo || '입구',
       });
@@ -348,67 +358,93 @@ export function createMapController(elId) {
 
     const zoom = map.getZoom();
     const dim = !!boundaryOpts.dimmed;
-    const opacityMul = dim ? 0.28 : 1;
+    const opacityMul = dim ? 0.35 : 1;
 
-    function addPoly(spec, style, label, minZoom) {
-      if (!spec || !Array.isArray(spec.ring) || spec.ring.length < 3) return;
-      if (zoom < minZoom) return;
-      const poly = L.polygon(spec.ring, {
-        ...style,
-        pane: 'boundaries',
-        interactive: false,
-        opacity: (style.opacity ?? 1) * opacityMul,
-        fillOpacity: (style.fillOpacity ?? 0) * opacityMul,
-      });
-      poly.addTo(boundaryGroup);
-      if (boundaryOpts.showBoundaryLabels && label && zoom >= minZoom + 1 && !dim) {
-        const c = ringCentroid(spec.ring);
-        if (c) {
-          L.marker(c, {
-            icon: L.divIcon({
-              html: `<span class="boundary-label">${escapeHtml(label)}</span>`,
-              className: 'boundary-label-wrap',
-              iconSize: [0, 0],
-              iconAnchor: [0, 0],
-            }),
-            pane: 'labels',
-            interactive: false,
-            keyboard: false,
-          }).addTo(boundaryLabelGroup);
-        }
+    // Display guest-orientation outline only (never raw OSM audit geometry).
+    const parkOutline = currentBoundaries.guestAreaOutline
+      || currentBoundaries.parkOutline
+      || currentBoundaries.parkOuterBoundary;
+    const ring = parkOutline && Array.isArray(parkOutline.ring) ? parkOutline.ring : null;
+    // Park maps usually minZoom=16; still draw from 15 so outline remains if framing expands.
+    if (!ring || ring.length < 3 || zoom < 15) return;
+
+    const thin = dim;
+    // Stroke-only guest outline (no fill, no inverse mask, no paidAreaOutline).
+    const weight = thin ? 2 : (zoom >= 18 ? 3 : 2.5);
+
+    L.polyline([...ring, ring[0]], {
+      pane: 'boundaries',
+      interactive: false,
+      color: '#1a5a7a',
+      weight,
+      opacity: (thin ? 0.75 : 0.95) * opacityMul,
+      lineJoin: 'round',
+      lineCap: 'round',
+      className: 'park-outline-stroke',
+      fill: false,
+    }).addTo(boundaryGroup);
+
+    if (boundaryOpts.showBoundaryLabels && !dim && zoom >= 17) {
+      const c = ringCentroid(ring);
+      const label = parkOutline.label || '파크 영역(안내용)';
+      const detail = parkOutline.detail
+        || '일반 게스트 이용구역을 이해하기 위한 안내용 경계입니다. 공식·법적 경계가 아니며 실제 운영구역은 현장 안내를 따라 주세요.';
+      if (c) {
+        L.marker(c, {
+          icon: L.divIcon({
+            html: `<span class="boundary-label" title="${escapeHtml(detail)}">${escapeHtml(label)}</span>`,
+            className: 'boundary-label-wrap',
+            iconSize: [0, 0],
+            iconAnchor: [0, 0],
+          }),
+          pane: 'labels',
+          interactive: false,
+          keyboard: false,
+        }).addTo(boundaryLabelGroup);
       }
     }
 
-    // Primary silhouette: parkOutline (line-first, very light fill).
-    // Fall back to legacy keys if an old payload is still cached.
-    const parkOutline = currentBoundaries.parkOutline
-      || currentBoundaries.parkOuterBoundary;
-    const entranceZone = currentBoundaries.entranceZone
-      || currentBoundaries.entranceAreaBoundary;
-    // paidAreaOutline stays in data (optional inset) but is not drawn —
-    // drawing it stacked with parkOutline made the map look messy.
-
-    const thin = dim; // layerMode overlays → keep outline readable but quiet
-    addPoly(parkOutline, {
-      color: '#3d5a73',
-      weight: thin ? 1.25 : 2,
-      fillColor: '#3d5a73',
-      fillOpacity: thin ? 0.02 : 0.045,
-      opacity: thin ? 0.55 : 0.88,
-      lineJoin: 'round',
-      lineCap: 'round',
-    }, '파크 윤곽', 16);
-
-    // Tiny pregate patch only.
-    if (boundaryOpts.showPregateBoundary) {
-      addPoly(entranceZone, {
-        color: '#c45c26',
-        weight: 1.5,
-        dashArray: null,
-        fillColor: '#c45c26',
-        fillOpacity: thin ? 0.06 : 0.12,
-        opacity: thin ? 0.45 : 0.75,
-      }, '입구 앞', 17);
+    // Ticket-gate line + approach arrow (no filled entranceZone polygon).
+    if (boundaryOpts.showPregateBoundary && zoom >= 17) {
+      const gate = currentBoundaries.gateLine;
+      if (gate && Array.isArray(gate.latlngs) && gate.latlngs.length >= 2) {
+        L.polyline(gate.latlngs, {
+          pane: 'boundaries',
+          interactive: false,
+          color: '#b33d12',
+          weight: 4,
+          opacity: 0.9 * opacityMul,
+          lineCap: 'square',
+        }).addTo(boundaryGroup);
+      }
+      const arrow = currentBoundaries.approachArrow;
+      if (arrow && Array.isArray(arrow.latlngs) && arrow.latlngs.length >= 2) {
+        L.polyline(arrow.latlngs, {
+          pane: 'boundaries',
+          interactive: false,
+          color: '#b33d12',
+          weight: 3,
+          opacity: 0.85 * opacityMul,
+          dashArray: null,
+        }).addTo(boundaryGroup);
+        const tip = arrow.latlngs[arrow.latlngs.length - 1];
+        const glyph = arrow.glyph || '▼';
+        // Label first, then arrow glyph so the tip reads as the entry direction.
+        L.marker(tip, {
+          icon: L.divIcon({
+            html: `<div class="gate-cue" aria-hidden="true">
+              <span class="gate-cue-label">${escapeHtml(arrow.label || '여기서 입장')}</span>
+              <span class="gate-cue-arrow">${escapeHtml(glyph)}</span>
+            </div>`,
+            className: 'gate-cue-wrap',
+            iconSize: [96, 40],
+            iconAnchor: [48, 38],
+          }),
+          pane: 'labels',
+          interactive: false,
+          keyboard: false,
+        }).addTo(boundaryLabelGroup);
+      }
     }
   }
 

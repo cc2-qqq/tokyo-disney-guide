@@ -643,7 +643,7 @@ function renderSettings() {
     ${meetupSettingsHtml()}
 
     <h3 class="sheet-h3">입구·경계 표시</h3>
-    <p class="muted small">파크 윤곽은 놀이동산 실제 형태에 가까운 안내용 표시입니다. 주차장·외부도로를 포함하지 않으며, 실제 운영 구역은 현장 안내를 따라 주세요.</p>
+      <p class="muted small">파크 영역(안내용) — 일반 게스트 이용구역을 이해하기 위한 안내용 경계입니다. 공식·법적 경계가 아니며 실제 운영구역은 현장 안내를 따라 주세요.</p>
     <label class="switch-row">
       <input type="checkbox" id="set-entrance-markers" ${s.showEntranceMarkers !== false ? 'checked' : ''} />
       <span>입구 표시</span>
@@ -654,7 +654,7 @@ function renderSettings() {
     </label>
     <label class="switch-row">
       <input type="checkbox" id="set-pregate-boundary" ${s.showPregateBoundary !== false ? 'checked' : ''} />
-      <span>프리게이트 표시</span>
+      <span>입구 게이트선·화살표 표시</span>
     </label>
     <label class="switch-row">
       <input type="checkbox" id="set-boundary-labels" ${s.showBoundaryLabels !== false ? 'checked' : ''} />
