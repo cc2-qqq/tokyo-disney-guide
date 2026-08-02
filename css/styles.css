@@ -76,23 +76,68 @@ h2, h3 { margin: 0; }
 .topbtn.on { background: var(--primary); color: #fff; border-color: var(--primary); }
 .nearby-btn-label { font-size: 11px; font-weight: 800; letter-spacing: -0.02em; }
 
-/* Map quick FAB — thumb-friendly, above bottom nav */
+/* Single nearby FAB — above bottom nav, does not stack over the map */
 .map-fab {
-  position: absolute; right: 10px; bottom: 12px;
-  z-index: 900; display: flex; flex-direction: column; gap: 8px;
-  max-width: min(42vw, 140px); pointer-events: none;
+  position: absolute; right: 12px; bottom: 14px;
+  z-index: 900; display: flex; pointer-events: none;
 }
 .map-fab .fab-btn {
-  pointer-events: auto; min-height: 44px; min-width: 44px; padding: 0 10px;
-  border-radius: 12px; border: 1px solid var(--border);
-  background: rgba(255,255,255,.94); color: var(--text); font-weight: 800; font-size: 12px;
-  box-shadow: 0 2px 10px rgba(0,0,0,.14); text-align: center;
+  pointer-events: auto; min-height: 52px; min-width: 52px; padding: 6px 10px;
+  border-radius: 16px; border: 1px solid var(--border);
+  background: rgba(255,255,255,.96); color: var(--text); font-weight: 800; font-size: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,.16);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+}
+.map-fab .fab-btn .fab-ico { font-size: 18px; line-height: 1; }
+.map-fab .fab-btn .fab-label { font-size: 11px; letter-spacing: -0.02em; }
+.map-fab .fab-btn.on {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
 }
 :root[data-theme="dark"] .map-fab .fab-btn,
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .map-fab .fab-btn {
-    background: rgba(24,36,48,.94); color: var(--text);
+    background: rgba(24,36,48,.96); color: var(--text);
   }
+  :root:not([data-theme="light"]) .map-fab .fab-btn.on {
+    background: var(--primary);
+    color: #fff;
+  }
+}
+
+/* Visit-order markers (sparse default map) */
+.marker.is-visit {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: #0b6bcb; color: #fff; border: 2px solid #fff;
+  box-shadow: 0 1px 5px rgba(0,0,0,.3);
+  display: flex; align-items: center; justify-content: center;
+  font: 800 12px/1 sans-serif;
+}
+.marker.is-visit.is-must { background: #b33d12; }
+.marker.is-visit.is-done { opacity: .42; filter: grayscale(.35); }
+.marker.is-visit.is-next { outline: 2px solid #0b6bcb; outline-offset: 2px; box-shadow: 0 0 0 3px rgba(11,107,203,.25); }
+.marker.is-visit .visit-star { position: absolute; top: -7px; right: -7px; font-size: 11px; line-height: 1; }
+.marker.is-nearest {
+  outline: 3px solid #1a7f37; outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(26,127,55,.22);
+  transform: scale(1.08);
+}
+
+/* Compact aux entrance markers (label only when selected) */
+.entrance-marker.is-pregate.compact,
+.entrance-marker.is-station.compact {
+  width: 28px; height: 28px; min-width: 28px; padding: 0; border-radius: 50%;
+  flex-direction: row;
+}
+.entrance-marker.is-pregate.compact .entrance-label,
+.entrance-marker.is-station.compact .entrance-label { display: none; }
+.entrance-marker.is-pregate.compact .entrance-glyph,
+.entrance-marker.is-station.compact .entrance-glyph { font-size: 13px; }
+.entrance-marker.is-station.compact { background: #5a6570; }
+.entrance-marker.is-pregate:not(.compact),
+.entrance-marker.is-station:not(.compact) {
+  min-width: 72px; padding: 4px 8px; border-radius: 10px;
 }
 
 .loc-status {
@@ -352,10 +397,22 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
   background: #c45c26; color: #fff; border: 2px solid #fff;
   box-shadow: 0 2px 8px rgba(0,0,0,.28); line-height: 1.1; text-align: center;
 }
-.entrance-marker.is-main {
+.entrance-marker.is-main.is-hero {
   background: #8f2808; min-width: 112px; padding: 6px 11px; border-radius: 12px;
   border-width: 2.5px; box-shadow: 0 3px 14px rgba(0,0,0,.42);
 }
+.entrance-marker.is-main.is-quiet,
+.entrance-marker.is-main.compact {
+  background: #a34a28; min-width: 28px; width: 28px; height: 28px; padding: 0;
+  border-radius: 50%; border-width: 2px; box-shadow: 0 1px 4px rgba(0,0,0,.22);
+  opacity: .9;
+}
+.entrance-marker.is-main.is-quiet:not(.compact) {
+  width: auto; height: auto; min-width: 40px; padding: 3px 6px; border-radius: 10px;
+}
+.entrance-marker.is-main.is-quiet .entrance-glyph,
+.entrance-marker.is-main.compact .entrance-glyph { font-size: 12px; }
+.entrance-marker.is-main .entrance-label-short { font-size: 9px; font-weight: 800; max-width: 3em; }
 .entrance-marker.is-pregate {
   background: #c45c26; min-width: 64px; opacity: .93;
 }
@@ -364,8 +421,8 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
   box-shadow: 0 1px 4px rgba(0,0,0,.2); opacity: .88;
 }
 .entrance-marker.is-selected { outline: 3px solid #0b6bcb; outline-offset: 2px; }
-.entrance-marker.is-main .entrance-glyph { font-size: 15px; }
-.entrance-marker.is-main .entrance-label { font-size: 12px; }
+.entrance-marker.is-main.is-hero .entrance-glyph { font-size: 15px; }
+.entrance-marker.is-main.is-hero .entrance-label { font-size: 12px; }
 .entrance-marker.is-pregate .entrance-glyph { font-size: 10px; }
 .entrance-marker.is-pregate .entrance-label { font-size: 9px; max-width: 7em; }
 .entrance-marker.is-station .entrance-glyph { font-size: 9px; }
