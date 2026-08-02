@@ -348,31 +348,42 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 .entrance-wrap { background: none; border: 0; }
 .entrance-marker {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 3px 7px; border-radius: 10px;
+  padding: 2px 6px; border-radius: 9px;
   background: #c45c26; color: #fff; border: 2px solid #fff;
-  box-shadow: 0 2px 8px rgba(0,0,0,.28); line-height: 1.12; text-align: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.28); line-height: 1.1; text-align: center;
 }
 .entrance-marker.is-main {
-  background: #9e2f0a; min-width: 108px; padding: 5px 10px; border-radius: 12px;
-  box-shadow: 0 3px 12px rgba(0,0,0,.38);
+  background: #8f2808; min-width: 112px; padding: 6px 11px; border-radius: 12px;
+  border-width: 2.5px; box-shadow: 0 3px 14px rgba(0,0,0,.42);
 }
 .entrance-marker.is-pregate {
-  background: #c45c26; min-width: 88px; opacity: .96;
+  background: #c45c26; min-width: 64px; opacity: .93;
 }
 .entrance-marker.is-station {
-  background: #8a6a55; min-width: 70px; padding: 2px 6px; border-width: 1.5px;
-  box-shadow: 0 1px 5px rgba(0,0,0,.22); opacity: .9;
+  background: #7a6558; min-width: 52px; padding: 1px 5px; border-width: 1.5px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.2); opacity: .88;
 }
 .entrance-marker.is-selected { outline: 3px solid #0b6bcb; outline-offset: 2px; }
-.entrance-marker.is-main .entrance-glyph { font-size: 14px; }
+.entrance-marker.is-main .entrance-glyph { font-size: 15px; }
 .entrance-marker.is-main .entrance-label { font-size: 12px; }
-.entrance-marker.is-pregate .entrance-glyph { font-size: 12px; }
-.entrance-marker.is-pregate .entrance-label { font-size: 10px; }
-.entrance-marker.is-station .entrance-glyph { font-size: 10px; }
-.entrance-marker.is-station .entrance-label { font-size: 9px; font-weight: 700; max-width: 8em; }
+.entrance-marker.is-pregate .entrance-glyph { font-size: 10px; }
+.entrance-marker.is-pregate .entrance-label { font-size: 9px; max-width: 7em; }
+.entrance-marker.is-station .entrance-glyph { font-size: 9px; }
+.entrance-marker.is-station .entrance-label { font-size: 8px; font-weight: 700; max-width: 7em; }
 .entrance-glyph { font-size: 13px; font-weight: 900; }
 .entrance-label { font-size: 11px; font-weight: 800; max-width: 10em; overflow-wrap: anywhere; }
 .li-entrance { background: #c45c26; font-weight: 900; }
+.gate-cue-wrap { background: none; border: 0; }
+.gate-cue {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  color: #8f2808; text-shadow: 0 0 3px #fff, 0 1px 2px rgba(255,255,255,.9);
+  line-height: 1.05; font-weight: 800;
+}
+.gate-cue-arrow { font-size: 14px; }
+.gate-cue-label {
+  font-size: 10px; background: rgba(255,255,255,.9); border: 1px solid #b33d12;
+  border-radius: 6px; padding: 1px 6px; white-space: nowrap;
+}
 .boundary-label-wrap { background: none; border: 0; }
 .boundary-label {
   display: inline-block; transform: translate(-50%, -50%);

@@ -1,0 +1,72 @@
+{
+  "extractedAt": "2026-08-02T01:12:03.875Z",
+  "results": [
+    {
+      "parkId": "TDL",
+      "osmId": 1282875870,
+      "points": 95,
+      "leafletRingPoints": 94,
+      "outPath": "C:\\Users\\magic\\Desktop\\이한\\디즈니랜드\\data\\boundaries\\tdl-park-boundary.geojson",
+      "tags": {
+        "addr:city": "浦安市",
+        "addr:postcode": "279-0031",
+        "addr:province": "千葉県",
+        "addr:quarter": "舞浜",
+        "brand": "ディズニーパーク",
+        "name": "東京ディズニーランド",
+        "name:en": "Tokyo Disneyland",
+        "name:es": "Tokyo Disneyland",
+        "name:ja": "東京ディズニーランド",
+        "name:ja-Hira": "とうきょうでぃずにーらんど",
+        "name:zh": "東京迪士尼樂園",
+        "name:zh-Hans": "东京迪士尼乐园",
+        "operator": "オリエンタルランド",
+        "short_name": "TDL",
+        "tourism": "theme_park",
+        "website": "https://www.tokyodisneyresort.jp/tdl/",
+        "wikidata": "Q843997",
+        "wikipedia": "ja:東京ディズニーランド"
+      }
+    },
+    {
+      "parkId": "TDS",
+      "osmId": 203538370,
+      "points": 229,
+      "leafletRingPoints": 228,
+      "outPath": "C:\\Users\\magic\\Desktop\\이한\\디즈니랜드\\data\\boundaries\\tds-park-boundary.geojson",
+      "tags": {
+        "addr:block_number": "1",
+        "addr:city": "浦安市",
+        "addr:postcode": "279-0031",
+        "addr:province": "千葉県",
+        "addr:quarter": "舞浜",
+        "branch": "東京ディズニーシー",
+        "branch:en": "Tokyo Disneysea",
+        "branch:ja": "東京ディズニーシー",
+        "brand": "ディズニーパーク",
+        "brand:en": "Disney Parks",
+        "brand:ja": "ディズニーパーク",
+        "name": "東京ディズニーシー",
+        "name:en": "Tokyo DisneySea",
+        "name:es": "Tokyo DisneySea",
+        "name:it": "Tokyo DisneySea",
+        "name:ja": "東京ディズニーシー",
+        "name:ja-Hira": "とうきょうでぃずにーしー",
+        "name:ja-Latn": "Tōkyō dizunīshī",
+        "name:ko": "도쿄 디즈니시",
+        "name:vi": "Tokyo DisneySea",
+        "name:zh": "東京迪士尼海洋",
+        "name:zh-Hans": "东京迪士尼海洋",
+        "operator": "オリエンタルランド",
+        "operator:en": "Orential Land",
+        "operator:ja": "オリエンタルランド",
+        "short_name": "TDS",
+        "tourism": "theme_park",
+        "website": "https://www.tokyodisneyresort.jp/tds/",
+        "website:en": "https://www.tokyodisneyresort.jp/en/tds/",
+        "wikidata": "Q1202341",
+        "wikipedia": "ja:東京ディズニーシー"
+      }
+    }
+  ]
+}

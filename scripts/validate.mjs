@@ -236,28 +236,31 @@ for (const parkId of PARK_IDS) {
   }
   const b = getParkBoundaries(parkId);
   if (!b) { err(`[${parkId}] 경계 데이터 없음`); continue; }
-  // parkOutline + entranceZone required; paidAreaOutline optional.
-  for (const key of ['parkOutline', 'entranceZone']) {
-    const ring = b[key] && b[key].ring;
-    if (!Array.isArray(ring) || ring.length < 3) err(`[${parkId}] ${key} 다각형 부족`);
-    else {
-      for (const c of ring) {
-        if (!Array.isArray(c) || c.length !== 2 || typeof c[0] !== 'number' || typeof c[1] !== 'number') {
-          err(`[${parkId}] ${key} 좌표 형식 오류`);
-          break;
-        }
+  // OSM theme_park outline required; filled entranceZone polygons are not allowed.
+  const ring = b.parkOutline && b.parkOutline.ring;
+  if (!Array.isArray(ring) || ring.length < 50) {
+    err(`[${parkId}] parkOutline 부족 (OSM 추출 다각형, 최소 50점 권장): ${ring ? ring.length : 0}`);
+  } else {
+    for (const c of ring) {
+      if (!Array.isArray(c) || c.length !== 2 || typeof c[0] !== 'number' || typeof c[1] !== 'number') {
+        err(`[${parkId}] parkOutline 좌표 형식 오류`);
+        break;
       }
     }
   }
-  if (b.paidAreaOutline) {
-    const ring = b.paidAreaOutline.ring;
-    if (!Array.isArray(ring) || ring.length < 3) err(`[${parkId}] paidAreaOutline 다각형 부족`);
+  if (!b.parkOutline?.osmId) err(`[${parkId}] parkOutline.osmId 없음 (OSM feature 연결 필요)`);
+  if (b.entranceZone) warn(`[${parkId}] entranceZone는 폐기됨 — gateLine/approachArrow를 사용하세요`);
+  if (b.parkOutline && b.parkOutline.coordinateCount && b.parkOutline.coordinateCount < 50) {
+    warn(`[${parkId}] parkOutline 점 수가 적음 (${b.parkOutline.coordinateCount}) — 수동 hull이 아닌지 확인`);
   }
-  // Guard: parkOutline must stay inside map maxBounds (not equal to it).
   const mb = PARKS[parkId].maxBounds;
-  if (mb && b.parkOutline && Array.isArray(b.parkOutline.ring)) {
-    for (const c of b.parkOutline.ring) {
-      if (!inBounds(c, mb)) warn(`[${parkId}] parkOutline 점이 maxBounds 밖: ${c}`);
+  if (mb && Array.isArray(ring)) {
+    let outside = 0;
+    for (const c of ring) {
+      if (!inBounds(c, mb)) outside++;
+    }
+    if (outside > ring.length * 0.15) {
+      warn(`[${parkId}] parkOutline 점 ${outside}/${ring.length}개가 maxBounds 밖`);
     }
   }
 }
