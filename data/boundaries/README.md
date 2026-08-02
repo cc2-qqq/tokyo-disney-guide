@@ -1,29 +1,34 @@
-# Park boundary extracts (OpenStreetMap)
+# Park boundaries
 
-Static GeoJSON of OSM `tourism=theme_park` ways for Tokyo Disneyland / DisneySea.
+Two layers are kept separate:
 
-| Park | OSM way | File |
-|------|---------|------|
-| TDL | [1282875870](https://www.openstreetmap.org/way/1282875870) | `tdl-park-boundary.geojson` |
-| TDS | [203538370](https://www.openstreetmap.org/way/203538370) | `tds-park-boundary.geojson` |
+| Layer | Path | Shown on map? | Purpose |
+|-------|------|---------------|---------|
+| Raw OSM `tourism=theme_park` | `raw/tdl-osm-theme-park.geojson`, `raw/tds-osm-theme-park.geojson` | No | Audit / provenance |
+| Guest area outline | `tdl-guest-area.geojson`, `tds-guest-area.geojson` | Yes | Guest-orientation outline |
 
-These are **not** legal cadastral boundaries. License: ODbL.
+## Properties (guest area)
 
-## Why not Protomaps tiles?
+- `boundaryPurpose`: `guest_orientation`
+- `officialBoundary`: `false`
+- `source`: OSM baseline + official Korean PDF + vector basemap visual alignment
+- `notes`: orientation-only; not a legal boundary
 
-Local PMTiles expose Disney parks only as **Point** features:
+## Why not Protomaps tiles alone?
 
-- source-layer: `pois`
-- `kind=theme_park`
-- No `landuse` polygon with `kind=theme_park`
+Local PMTiles expose Disney parks only as **Point** features (`pois` / `kind=theme_park`). There is no usable `theme_park` landuse polygon in the bundled tiles.
 
-So the app uses this static OSM extract instead of inventing manual hulls.
-
-## Refresh
+## Rebuild
 
 ```bash
+# Refresh raw OSM extracts (optional; Overpass)
 node tools/extract-park-boundaries.mjs
-node tools/build-park-boundary-module.mjs
+
+# Build guest-area edits + js/data/parkBoundaryGeojson.js
+node tools/build-guest-area-boundaries.mjs
+
+npm run validate
 ```
 
 Do **not** call Overpass at runtime in the app.
+Do **not** widen `maxBounds` to hide outline overflow — shrink the guest outline instead.

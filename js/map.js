@@ -360,23 +360,24 @@ export function createMapController(elId) {
     const dim = !!boundaryOpts.dimmed;
     const opacityMul = dim ? 0.35 : 1;
 
-    const parkOutline = currentBoundaries.parkOutline
+    // Display guest-orientation outline only (never raw OSM audit geometry).
+    const parkOutline = currentBoundaries.guestAreaOutline
+      || currentBoundaries.parkOutline
       || currentBoundaries.parkOuterBoundary;
     const ring = parkOutline && Array.isArray(parkOutline.ring) ? parkOutline.ring : null;
     // Park maps usually minZoom=16; still draw from 15 so outline remains if framing expands.
     if (!ring || ring.length < 3 || zoom < 15) return;
 
     const thin = dim;
+    // Stroke-only guest outline (no fill, no inverse mask, no paidAreaOutline).
+    const weight = thin ? 2 : (zoom >= 18 ? 3 : 2.5);
 
-    // Stroke-only OSM outline (no interior fill). Inverse outside-mask via SVG
-    // evenodd was unreliable in this Leaflet path stack, so we keep the park
-    // basemap fully readable and rely on the real outline geometry.
     L.polyline([...ring, ring[0]], {
       pane: 'boundaries',
       interactive: false,
-      color: '#154a6e',
-      weight: thin ? 2.25 : 3.25,
-      opacity: (thin ? 0.7 : 1) * opacityMul,
+      color: '#1a5a7a',
+      weight,
+      opacity: (thin ? 0.75 : 0.95) * opacityMul,
       lineJoin: 'round',
       lineCap: 'round',
       className: 'park-outline-stroke',
@@ -385,10 +386,13 @@ export function createMapController(elId) {
 
     if (boundaryOpts.showBoundaryLabels && !dim && zoom >= 17) {
       const c = ringCentroid(ring);
+      const label = parkOutline.label || '파크 영역(안내용)';
+      const detail = parkOutline.detail
+        || '일반 게스트 이용구역을 이해하기 위한 안내용 경계입니다. 공식·법적 경계가 아니며 실제 운영구역은 현장 안내를 따라 주세요.';
       if (c) {
         L.marker(c, {
           icon: L.divIcon({
-            html: '<span class="boundary-label">파크 영역 (OSM)</span>',
+            html: `<span class="boundary-label" title="${escapeHtml(detail)}">${escapeHtml(label)}</span>`,
             className: 'boundary-label-wrap',
             iconSize: [0, 0],
             iconAnchor: [0, 0],
@@ -424,15 +428,17 @@ export function createMapController(elId) {
           dashArray: null,
         }).addTo(boundaryGroup);
         const tip = arrow.latlngs[arrow.latlngs.length - 1];
+        const glyph = arrow.glyph || '▼';
+        // Label first, then arrow glyph so the tip reads as the entry direction.
         L.marker(tip, {
           icon: L.divIcon({
             html: `<div class="gate-cue" aria-hidden="true">
-              <span class="gate-cue-arrow">${escapeHtml(arrow.glyph || '▲')}</span>
               <span class="gate-cue-label">${escapeHtml(arrow.label || '여기서 입장')}</span>
+              <span class="gate-cue-arrow">${escapeHtml(glyph)}</span>
             </div>`,
             className: 'gate-cue-wrap',
-            iconSize: [88, 36],
-            iconAnchor: [44, 34],
+            iconSize: [96, 40],
+            iconAnchor: [48, 38],
           }),
           pane: 'labels',
           interactive: false,

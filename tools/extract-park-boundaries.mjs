@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const OUT_DIR = join(ROOT, 'data', 'boundaries');
+const OUT_DIR = join(ROOT, 'data', 'boundaries', 'raw');
 
 const PARKS = {
   TDL: {
@@ -13,14 +13,14 @@ const PARKS = {
     osmId: 1282875870,
     name: 'Tokyo Disneyland',
     nameJa: '東京ディズニーランド',
-    file: 'tdl-park-boundary.geojson',
+    file: 'tdl-osm-theme-park.geojson',
   },
   TDS: {
     osmType: 'way',
     osmId: 203538370,
     name: 'Tokyo DisneySea',
     nameJa: '東京ディズニーシー',
-    file: 'tds-park-boundary.geojson',
+    file: 'tds-osm-theme-park.geojson',
   },
 };
 
@@ -95,7 +95,7 @@ async function extractOne(parkId, meta) {
       sourceUrl: `https://www.openstreetmap.org/way/${meta.osmId}`,
       license: 'ODbL',
       extractedAt: new Date().toISOString().slice(0, 10),
-      notes: 'OSM tourism=theme_park polygon (not a legal cadastral boundary). Static extract for offline map guidance.',
+      notes: 'Raw OSM tourism=theme_park polygon for audit/provenance only. Not displayed on the map — see *-guest-area.geojson.',
       coordinateCount: ring.length,
       geometryType: 'Polygon',
       multipolygon: false,
@@ -134,7 +134,7 @@ for (const [parkId, meta] of Object.entries(PARKS)) {
 }
 
 writeFileSync(
-  join(OUT_DIR, '_extract-summary.json'),
+  join(ROOT, 'data', 'boundaries', '_extract-summary.json'),
   `${JSON.stringify({ extractedAt: new Date().toISOString(), results }, null, 2)}\n`,
   'utf8',
 );

@@ -236,32 +236,199 @@ for (const parkId of PARK_IDS) {
   }
   const b = getParkBoundaries(parkId);
   if (!b) { err(`[${parkId}] 경계 데이터 없음`); continue; }
-  // OSM theme_park outline required; filled entranceZone polygons are not allowed.
-  const ring = b.parkOutline && b.parkOutline.ring;
-  if (!Array.isArray(ring) || ring.length < 50) {
-    err(`[${parkId}] parkOutline 부족 (OSM 추출 다각형, 최소 50점 권장): ${ring ? ring.length : 0}`);
-  } else {
-    for (const c of ring) {
-      if (!Array.isArray(c) || c.length !== 2 || typeof c[0] !== 'number' || typeof c[1] !== 'number') {
-        err(`[${parkId}] parkOutline 좌표 형식 오류`);
-        break;
-      }
+  validateGuestAreaOutline(parkId, b, getPois(parkId), ents);
+}
+
+function pointInRing(pt, ring) {
+  let x = pt[1]; let y = pt[0]; let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][1]; const yi = ring[i][0];
+    const xj = ring[j][1]; const yj = ring[j][0];
+    const intersect = ((yi > y) !== (yj > y))
+      && (x < ((xj - xi) * (y - yi)) / (yj - yi + 0.0) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+function haversineM(a, b) {
+  const R = 6371000;
+  const toR = (d) => (d * Math.PI) / 180;
+  const dLat = toR(b[0] - a[0]);
+  const dLng = toR(b[1] - a[1]);
+  const la1 = toR(a[0]);
+  const la2 = toR(b[0]);
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function distToRingM(pt, ring) {
+  let best = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    // approximate: min distance to segment endpoints + mid (good enough for gate checks)
+    best = Math.min(best, haversineM(pt, a), haversineM(pt, b));
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    best = Math.min(best, haversineM(pt, mid));
+  }
+  return best;
+}
+
+function segmentsIntersectProper(a, b, c, d) {
+  const cross = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  const d1 = cross(a, b, c);
+  const d2 = cross(a, b, d);
+  const d3 = cross(c, d, a);
+  const d4 = cross(c, d, b);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+    && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+function ringSelfIntersects(ring) {
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      if (Math.abs(i - j) <= 1) continue;
+      if (i === 0 && j === n - 1) continue;
+      const c = ring[j];
+      const d = ring[(j + 1) % n];
+      if (segmentsIntersectProper(a, b, c, d)) return true;
     }
   }
-  if (!b.parkOutline?.osmId) err(`[${parkId}] parkOutline.osmId 없음 (OSM feature 연결 필요)`);
+  return false;
+}
+
+function isIntendedOutsideException(p) {
+  if (!p) return false;
+  if (p.hotelOnly === true) return true;
+  if (p.pregate === true) return true;
+  if (p.insidePaidArea === false) return true;
+  if (p.area === 'pregate') return true;
+  if (typeof p.id === 'string' && (p.id.includes('-pg') || p.id.includes('-hotel-'))) return true;
+  return false;
+}
+
+function validateGuestAreaOutline(parkId, b, pois, ents) {
   if (b.entranceZone) warn(`[${parkId}] entranceZone는 폐기됨 — gateLine/approachArrow를 사용하세요`);
-  if (b.parkOutline && b.parkOutline.coordinateCount && b.parkOutline.coordinateCount < 50) {
-    warn(`[${parkId}] parkOutline 점 수가 적음 (${b.parkOutline.coordinateCount}) — 수동 hull이 아닌지 확인`);
+
+  const outline = b.guestAreaOutline || b.parkOutline;
+  const ring = outline && outline.ring;
+  if (!Array.isArray(ring) || ring.length < 20) {
+    err(`[${parkId}] guestAreaOutline 부족(closed polygon 최소 20점): ${ring ? ring.length : 0}`);
+    return;
   }
+  for (const c of ring) {
+    if (!Array.isArray(c) || c.length !== 2 || typeof c[0] !== 'number' || typeof c[1] !== 'number') {
+      err(`[${parkId}] guestAreaOutline 좌표 형식 오류`);
+      return;
+    }
+  }
+  // zero-length / duplicate consecutive
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const c = ring[(i + 1) % ring.length];
+    if (a[0] === c[0] && a[1] === c[1]) {
+      err(`[${parkId}] guestAreaOutline 길이 0 세그먼트/중복 연속 좌표 @${i}`);
+      break;
+    }
+  }
+  if (ringSelfIntersects(ring)) {
+    err(`[${parkId}] guestAreaOutline self-intersection`);
+  }
+
+  if (outline.boundaryPurpose && outline.boundaryPurpose !== 'guest_orientation') {
+    warn(`[${parkId}] boundaryPurpose='${outline.boundaryPurpose}' (guest_orientation 권장)`);
+  }
+  if (outline.officialBoundary === true) {
+    err(`[${parkId}] officialBoundary=true 이면 안 됨 (안내용 경계)`);
+  }
+  if (!b.rawOsmBoundary?.osmId && !outline.sourceOsmId) {
+    warn(`[${parkId}] raw OSM 출처 id 없음 (감사 추적용)`);
+  }
+
   const mb = PARKS[parkId].maxBounds;
-  if (mb && Array.isArray(ring)) {
+  if (mb) {
     let outside = 0;
     for (const c of ring) {
       if (!inBounds(c, mb)) outside++;
     }
-    if (outside > ring.length * 0.15) {
-      warn(`[${parkId}] parkOutline 점 ${outside}/${ring.length}개가 maxBounds 밖`);
+    if (outside > 0) {
+      err(`[${parkId}] guestAreaOutline 점 ${outside}/${ring.length}개가 maxBounds 밖 — 경계를 줄이세요(maxBounds 확대 금지)`);
     }
+  }
+
+  // Operating attractions must be inside (no silent skip).
+  let attrOut = 0;
+  for (const p of pois) {
+    if (p.type !== 'attraction') continue;
+    if ((p.operatingStatus || 'operating') !== 'operating') continue;
+    if (!p.coordinates) continue;
+    if (!pointInRing(p.coordinates, ring)) {
+      attrOut++;
+      err(`[${parkId}] 운영 어트랙션이 guestAreaOutline 밖: ${p.id} (${p.nameKo || p.name || ''})`);
+    }
+  }
+
+  // High/Medium park-interior restrooms must be inside unless intended exception.
+  let rrOut = 0;
+  for (const p of pois) {
+    if (p.type !== 'restroom') continue;
+    if (p.coordinateStatus !== 'high_estimated' && p.coordinateStatus !== 'medium_estimated') continue;
+    if (!p.coordinates) continue;
+    if (isIntendedOutsideException(p)) continue;
+    if (p.insidePaidArea !== true) continue;
+    if (!pointInRing(p.coordinates, ring)) {
+      rrOut++;
+      err(`[${parkId}] High/Medium 파크 내부 화장실이 guestAreaOutline 밖: ${p.id}`);
+    }
+  }
+
+  // TDS Fantasy Springs key facilities
+  if (parkId === 'TDS') {
+    const fsIds = [
+      'tds-a-frozen', 'tds-a-rapunzel', 'tds-a-peterpan', 'tds-a-tinkerbell',
+    ];
+    for (const id of fsIds) {
+      const p = pois.find((x) => x.id === id);
+      if (!p?.coordinates) {
+        err(`[TDS] 판타지 스프링스 시설 누락: ${id}`);
+        continue;
+      }
+      if (!pointInRing(p.coordinates, ring)) {
+        err(`[TDS] 판타지 스프링스 시설이 guestAreaOutline 밖: ${id}`);
+      }
+    }
+  }
+
+  // Main entrance should sit near the outline (not deep inside / far away).
+  const main = ents.find((e) => e.entranceKind === 'main_entrance');
+  if (main?.coordinates) {
+    const d = distToRingM(main.coordinates, ring);
+    if (d > 90) {
+      err(`[${parkId}] 메인 입구가 guestAreaOutline에서 너무 멂 (${d.toFixed(0)}m)`);
+    }
+  }
+
+  // Pregate / station markers must not be classified as deep park-interior POIs.
+  for (const e of ents) {
+    if (e.entranceKind !== 'pre_gate' && e.entranceKind !== 'station_side') continue;
+    if (e.insidePaidArea === true) {
+      err(`[entrance:${parkId}] ${e.id}: 프리게이트/스테이션이 insidePaidArea=true 로 분류됨`);
+    }
+    if (e.coordinates && pointInRing(e.coordinates, ring)) {
+      const d = distToRingM(e.coordinates, ring);
+      if (d > 45) {
+        err(`[entrance:${parkId}] ${e.id}: 프리게이트/스테이션이 파크 polygon 깊숙이 들어감 (${d.toFixed(0)}m)`);
+      }
+    }
+  }
+
+  if (attrOut === 0 && rrOut === 0) {
+    // keep quiet on success counts; summary printed below
   }
 }
 

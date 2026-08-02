@@ -1,39 +1,61 @@
-// Park boundary guidance sourced from OpenStreetMap theme_park polygons.
-// Manual attraction-hull / maxBounds-style rings are intentionally NOT used.
+// Park boundary guidance.
+// - rawOsmBoundary: OSM tourism=theme_park extract (audit / provenance only)
+// - guestAreaOutline: orientation outline shown on the map (OSM baseline + edits)
 //
-// Protomaps local PMTiles only expose theme parks as Point POIs (source-layer
-// "pois", kind=theme_park) — no landuse polygon geometry. Therefore rings are
-// a static extract of OSM ways (see data/boundaries/*.geojson).
+// Protomaps local PMTiles only expose theme parks as Point POIs — no landuse
+// theme_park polygons — so geometry is shipped as static GeoJSON extracts.
 
 import { PARK_BOUNDARY_GEOJSON } from './parkBoundaryGeojson.js';
 
-function fromOsm(parkId) {
+const DETAIL_NOTE =
+  '일반 게스트 이용구역을 이해하기 위한 안내용 경계입니다. 공식·법적 경계가 아니며 실제 운영구역은 현장 안내를 따라 주세요.';
+
+function fromPack(parkId) {
   const pack = PARK_BOUNDARY_GEOJSON[parkId];
-  if (!pack) return null;
-  const props = pack.feature?.properties || {};
+  if (!pack?.guestArea) return null;
+  const gProps = pack.guestArea.feature?.properties || {};
+  const rProps = pack.rawOsm?.feature?.properties || {};
+
   return {
-    parkOutline: {
-      ring: pack.ring,
-      geometryType: props.geometryType || 'Polygon',
-      multipolygon: !!props.multipolygon,
-      osmType: props.osmType,
-      osmId: props.osmId,
-      featureId: pack.feature?.id || null,
-      confidence: 'osm_extract',
-      source: props.source || 'OpenStreetMap',
-      sourceUrl: props.sourceUrl || null,
-      license: props.license || 'ODbL',
-      notes: props.notes
-        || 'OSM tourism=theme_park polygon (not legal cadastral). Static extract — not maxBounds / not attraction hull.',
-      checkedAt: props.extractedAt || null,
-      coordinateCount: pack.ring?.length || 0,
+    guestAreaOutline: {
+      ring: pack.guestArea.ring,
+      geometryType: gProps.geometryType || 'Polygon',
+      multipolygon: !!gProps.multipolygon,
+      boundaryPurpose: gProps.boundaryPurpose || 'guest_orientation',
+      officialBoundary: gProps.officialBoundary === true,
+      confidence: 'guest_orientation_edit',
+      source: gProps.source
+        || 'OSM tourism=theme_park way + official Korean PDF + vector basemap visual alignment',
+      sourceOsmId: gProps.sourceOsmId || rProps.osmId || null,
+      sourceOsmUrl: gProps.sourceOsmUrl || rProps.sourceUrl || null,
+      license: gProps.license || 'ODbL (OSM baseline) + app orientation edits',
+      notes: gProps.notes || DETAIL_NOTE,
+      label: '파크 영역(안내용)',
+      detail: DETAIL_NOTE,
+      checkedAt: gProps.checkedAt || null,
+      coordinateCount: pack.guestArea.ring?.length || 0,
+      edits: gProps.edits || null,
     },
-    // Gate cue (line), not a filled entranceZone polygon.
+    rawOsmBoundary: pack.rawOsm
+      ? {
+          ring: pack.rawOsm.ring,
+          osmType: rProps.osmType || 'way',
+          osmId: rProps.osmId || null,
+          sourceUrl: rProps.sourceUrl || null,
+          license: rProps.license || 'ODbL',
+          notes: rProps.notes
+            || 'Raw OSM tourism=theme_park polygon (audit only — not shown on map).',
+          checkedAt: rProps.extractedAt || null,
+          coordinateCount: pack.rawOsm.ring?.length || 0,
+        }
+      : null,
+    // Backward-compatible alias used by older call sites / validators during transition.
+    parkOutline: null,
     gateLine: null,
     approachArrow: null,
-    source: props.source || 'OpenStreetMap',
-    notes: 'Manual parkOutline rings removed. Using OSM theme_park way geometry.',
-    checkedAt: props.extractedAt || null,
+    source: gProps.source || 'guest_orientation',
+    notes: DETAIL_NOTE,
+    checkedAt: gProps.checkedAt || null,
   };
 }
 
@@ -49,13 +71,13 @@ const GATE_CUES = {
       notes: '티켓게이트 안내선(안내용). 면적 entranceZone 아님.',
     },
     approachArrow: {
-      // From pregate plaza toward main gate (south→north into park)
+      // From gate toward World Bazaar / park interior (north → south)
       latlngs: [
-        [35.63500, 139.87995],
         [35.63522, 139.87995],
+        [35.63500, 139.87995],
       ],
       label: '여기서 입장',
-      glyph: '▲',
+      glyph: '▼',
     },
   },
   TDS: {
@@ -68,7 +90,7 @@ const GATE_CUES = {
       notes: '티켓게이트 안내선(안내용). 면적 entranceZone 아님.',
     },
     approachArrow: {
-      // From west approach toward gate (west→east into park)
+      // From west approach toward gate (west → east into park)
       latlngs: [
         [35.62680, 139.88210],
         [35.62680, 139.88242],
@@ -80,8 +102,15 @@ const GATE_CUES = {
 };
 
 function build(parkId) {
-  const base = fromOsm(parkId);
+  const base = fromPack(parkId);
   if (!base) return null;
+  // Prefer guestAreaOutline as the render ring; keep parkOutline alias in sync
+  // so any leftover parkOutline readers still show the guest outline.
+  base.parkOutline = {
+    ...base.guestAreaOutline,
+    // Explicit: displayed outline is guest orientation, not raw OSM.
+    displayRole: 'guestAreaOutline',
+  };
   const cues = GATE_CUES[parkId] || {};
   return {
     ...base,
@@ -94,3 +123,5 @@ export const PARK_BOUNDARIES = {
   TDL: build('TDL'),
   TDS: build('TDS'),
 };
+
+export const BOUNDARY_DETAIL_NOTE = DETAIL_NOTE;

@@ -643,7 +643,7 @@ function renderSettings() {
     ${meetupSettingsHtml()}
 
     <h3 class="sheet-h3">입구·경계 표시</h3>
-    <p class="muted small">파크 윤곽은 OpenStreetMap의 theme_park 다각형(안내용)입니다. 법적 경계가 아니며, 실제 운영 구역은 현장 안내를 따라 주세요.</p>
+      <p class="muted small">파크 영역(안내용) — 일반 게스트 이용구역을 이해하기 위한 안내용 경계입니다. 공식·법적 경계가 아니며 실제 운영구역은 현장 안내를 따라 주세요.</p>
     <label class="switch-row">
       <input type="checkbox" id="set-entrance-markers" ${s.showEntranceMarkers !== false ? 'checked' : ''} />
       <span>입구 표시</span>

@@ -1,0 +1,87 @@
+{
+  "builtAt": "2026-08-02T05:53:42.905Z",
+  "TDL": {
+    "points": 51,
+    "notes": [
+      {
+        "action": "keep_osm_segment",
+        "osmIndexRange": [
+          22,
+          37
+        ],
+        "reason": "남·남동 게스트 외곽(투머로우랜드~크리터 접근). OSM 굴곡 유지"
+      },
+      {
+        "action": "replace_segment",
+        "removedOsmIndexRange": [
+          38,
+          43
+        ],
+        "reason": "동측 백스테이지·서비스 부지 제거. 수로/담장 쪽 외곽으로 축소",
+        "removedApprox": "east of ~139.8845 toward 139.8872"
+      },
+      {
+        "action": "keep_osm_segment_clamped",
+        "osmIndexRange": [
+          44,
+          49
+        ],
+        "reason": "어드벤처랜드 북동 외곽 유지, maxBounds·서비스 쪽으로 과도한 돌출 클램프"
+      },
+      {
+        "action": "replace_segment",
+        "removedOsmIndexRange": [
+          50,
+          86
+        ],
+        "reason": "월드바자 입구 네크 유지. 모노레일 스테이션 본체·Bon Voyage·외부 상업·북측 주차 제외"
+      },
+      {
+        "action": "replace_segment",
+        "removedOsmIndexRange": [
+          0,
+          21
+        ],
+        "reason": "서측 OSM이 리조트 공유 노드·maxBounds 밖으로 연장됨 → 투머로우랜드 서측 담장/철도 쪽 게스트 외곽으로 축소"
+      }
+    ]
+  },
+  "TDS": {
+    "points": 46,
+    "notes": [
+      {
+        "action": "keep_osm_plus_south_shore",
+        "osmIndexRange": [
+          0,
+          4
+        ],
+        "reason": "동측 OSM 팁 유지 후 남측은 게스트 해안선을 따라 서진. 남측 서비스 수역·긴 대각선 제거"
+      },
+      {
+        "action": "replace_segment",
+        "removedOsmIndexRange": [
+          24,
+          142
+        ],
+        "reason": "버스터미널·외부 자동차도로·호텔 매스·리조트 공유 서쪽 로브 제거. 티켓게이트/하버 측 게스트 접근 외곽만 유지"
+      },
+      {
+        "action": "add_guest_perimeter",
+        "reason": "아메리칸 워터프런트·포트 디스커버리 북측 외곽 및 판타지 스프링스(프로즌/라푼젤/피터팬 연결부)를 도로·수로·건물 외곽을 따라 추가. OSM way가 FS·북측 게스트 구역을 누락",
+        "includes": [
+          "american-waterfront",
+          "port-discovery",
+          "fantasy-springs"
+        ]
+      },
+      {
+        "action": "replace_segment",
+        "removedOsmIndexRange": [
+          174,
+          227
+        ],
+        "reason": "동측 OSM 요철·maxBounds 클램프 중복 세그먼트 대신 게스트 동측 해안/부지 선을 단순·비교차로 재구성"
+      }
+    ]
+  }
+}
