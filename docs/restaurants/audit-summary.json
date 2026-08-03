@@ -1,0 +1,64 @@
+{
+  "checkedAt": "2026-08-04",
+  "officialListUrls": [
+    "https://www.tokyodisneyresort.jp/en/tdl/restaurant/list.html",
+    "https://www.tokyodisneyresort.jp/en/tds/restaurant/list.html",
+    "https://www.tokyodisneyresort.jp/tdl/restaurant/list.html",
+    "https://www.tokyodisneyresort.jp/tds/restaurant/list.html"
+  ],
+  "officialListCounts": {
+    "TDL": 59,
+    "TDS": 66,
+    "note": "EN list headings counted 2026-08-04 (includes popcorn/ice cream wagons/booths)"
+  },
+  "tdlRegistered": 55,
+  "tdsRegistered": 52,
+  "tdlPopcornWagon": 14,
+  "tdsPopcornWagon": 11,
+  "byCoordinateStatus": {
+    "high_verified": 3,
+    "medium_estimated": 102,
+    "low_estimated": 2
+  },
+  "childrenMenuTrue": 43,
+  "mobileOrderTrue": 32,
+  "prioritySeatingTrue": 17,
+  "excluded": [
+    {
+      "name": "Food Booth (Adventureland side)",
+      "park": "TDL",
+      "reason": "계절·이벤트성 푸드부스로 상시 식당과 별도. 이번 버전에서 제외."
+    },
+    {
+      "name": "Food Booth (Tomorrowland side)",
+      "park": "TDL",
+      "reason": "계절·이벤트성 푸드부스로 상시 식당과 별도. 이번 버전에서 제외."
+    },
+    {
+      "name": "Ice cream wagon (multiple TDL/TDS)",
+      "park": "both",
+      "reason": "아이스크림 왜건은 위치·운영이 자주 바뀌어 이번 버전에서 일괄 제외. 추후 검증 후 추가."
+    },
+    {
+      "name": "Cape Cod Cook-Off (Show Dining Area)",
+      "park": "TDS",
+      "reason": "케이프 코드 쿡오프의 쇼 다이닝 좌석 구역으로 별도 시설명이지만 동일 시설로 통합."
+    },
+    {
+      "name": "Terrace seats at The Teddy Roosevelt Lounge",
+      "park": "TDS",
+      "reason": "테디 루스벨트 라운지의 테라스 좌석으로 별도 등록하지 않음."
+    },
+    {
+      "name": "Yucatan Base Camp Grill（To Go）",
+      "park": "TDS",
+      "reason": "유카탄 베이스 캠프 그릴의 테이크아웃 카운터로 본 시설에 통합."
+    },
+    {
+      "name": "Sparkling Jubilee Wagons NEW",
+      "park": "TDS",
+      "reason": "시즌 한정 왜건으로 상시 데이터에서 제외."
+    }
+  ],
+  "notes": "Attributes from official list presence + established TDR service patterns; mobileOrder/childrenMenu set true only for well-known QS/table service patterns and may change. Coordinates estimated from park layout + official map areas — not GPS surveyed. Ice cream wagons and seasonal booths excluded this pass."
+}

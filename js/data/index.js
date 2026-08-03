@@ -1,6 +1,7 @@
 import { PARKS, PARK_IDS, LANDMARK_ATTRACTIONS, isLandmark } from './parks.js';
 import { TDL_ATTRACTIONS, TDL_RESTROOMS, TDL_EMERGENCY, TDL_BABYCARE } from './tdl.js';
 import { TDS_ATTRACTIONS, TDS_RESTROOMS, TDS_EMERGENCY, TDS_BABYCARE } from './tds.js';
+import { TDL_RESTAURANTS, TDS_RESTAURANTS, RESTAURANT_AUDIT } from './restaurants.js';
 import { ENTRANCES } from './entrances.js';
 import { PARK_BOUNDARIES } from './boundaries.js';
 
@@ -10,12 +11,14 @@ const DATA = {
     restrooms: TDL_RESTROOMS,
     emergency: TDL_EMERGENCY,
     babyCare: TDL_BABYCARE,
+    restaurants: TDL_RESTAURANTS,
   },
   TDS: {
     attractions: TDS_ATTRACTIONS,
     restrooms: TDS_RESTROOMS,
     emergency: TDS_EMERGENCY,
     babyCare: TDS_BABYCARE,
+    restaurants: TDS_RESTAURANTS,
   },
 };
 
@@ -36,6 +39,7 @@ export function getPois(parkId) {
     ...withArea(d.restrooms),
     ...withArea(d.emergency),
     ...withArea(d.babyCare),
+    ...withArea(d.restaurants || []),
   ];
 }
 
@@ -53,10 +57,16 @@ export function getArchivedAttractions(parkId) {
   return getPois(parkId).filter((p) => p.type === 'attraction' && (p.operatingStatus || 'operating') !== 'operating');
 }
 
-// Facility POIs = restrooms, baby care/nursing, emergency.
+// Facility POIs = restrooms, baby care/nursing, emergency (not restaurants).
 export function getFacilities(parkId) {
-  return getPois(parkId).filter((p) => p.type !== 'attraction');
+  return getPois(parkId).filter((p) => p.type !== 'attraction' && p.type !== 'restaurant');
 }
+
+export function getRestaurants(parkId) {
+  return getPois(parkId).filter((p) => p.type === 'restaurant');
+}
+
+export { RESTAURANT_AUDIT };
 
 export function getPoiById(parkId, id) {
   return getPois(parkId).find((p) => p.id === id)

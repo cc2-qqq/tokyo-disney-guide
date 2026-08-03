@@ -14,7 +14,24 @@ const ICONS = {
   babyCare: { glyph: '\u{1F476}', cls: 'm-baby', label: '베이비케어·수유' },
   firstAid: { glyph: '\u271A', cls: 'm-firstaid', label: '중앙구호실' },
   emergencyFacility: { glyph: '\u271A', cls: 'm-firstaid', label: '응급시설' },
+  restaurant: { glyph: '\u{1F374}', cls: 'm-restaurant', label: '식당' },
+  cafe: { glyph: '\u2615', cls: 'm-cafe', label: '카페' },
+  snack: { glyph: '\u{1F36A}', cls: 'm-snack', label: '간식' },
+  popcorn: { glyph: '\u{1F37F}', cls: 'm-popcorn', label: '팝콘' },
 };
+
+function iconSpecFor(poi) {
+  if (poi.type === 'restaurant') {
+    const ft = poi.facilityType;
+    if (ft === 'cafe' || poi.mealType === 'dessert') return ICONS.cafe;
+    if (ft === 'popcorn_wagon' || poi.mealType === 'popcorn') return ICONS.popcorn;
+    if (ft === 'snack_stand' || ft === 'food_wagon' || ft === 'drink_stand' || poi.mealType === 'snack' || poi.mealType === 'drink') {
+      return ICONS.snack;
+    }
+    return ICONS.restaurant;
+  }
+  return ICONS[poi.type] || ICONS.attraction;
+}
 
 function escapeHtml(s) {
   return (s == null ? '' : String(s)).replace(/[&<>"']/g, (c) => (
@@ -253,7 +270,7 @@ export function createMapController(elId) {
         iconAnchor: [13, 13],
       });
     }
-    const spec = ICONS[poi.type] || ICONS.attraction;
+    const spec = iconSpecFor(poi);
     let trustCls = '';
     if (poi.coordinateStatus === 'medium_estimated') trustCls = 'is-medium';
     else if (poi.coordinateStatus === 'low_estimated') trustCls = 'is-low is-approx';
@@ -282,7 +299,7 @@ export function createMapController(elId) {
         keyboard: true,
         zIndexOffset: poi._isNearest ? 700 : (poi._isNext ? 650 : (poi._visitOrder != null ? 500 : 400)),
         title: poi.nameKo || poi.name,
-        alt: `${(ICONS[poi.type] || {}).label || ''} ${poi.nameKo || poi.name}`,
+        alt: `${(iconSpecFor(poi).label || '')} ${poi.nameKo || poi.name}`,
       });
       m.on('click', () => onSelect && onSelect(poi.id));
       m.addTo(markerGroup);
@@ -771,6 +788,9 @@ export function createMapController(elId) {
       return poi.nameKo || poi.nameEn || poi.name || poi.nameJa;
     }
     function subText(poi) {
+      if (poi.type === 'restaurant' && Array.isArray(poi.cuisineTags) && poi.cuisineTags.length) {
+        return poi.cuisineTags.slice(0, 2).join(' · ');
+      }
       if (!showJaSub || jaOnly) return null;
       const ja = poi.nameJa || poi.name;
       const main = mainText(poi);
@@ -826,6 +846,7 @@ export function createMapController(elId) {
       if (!poi) continue;
       if (attractionsOnly && poi.type !== 'attraction') continue;
       if (cat === 'restrooms' && poi.type !== 'restroom' && poi.type !== 'babyCare') continue;
+      if (cat === 'restaurants' && poi.type !== 'restaurant') continue;
       if (cat === 'favorites' && !s.favIds.has(poi.id) && id !== s.selectedId && id !== s.directionId) continue;
       if (cat === 'none' && id !== s.selectedId && id !== s.directionId) continue;
       const selected = id === s.selectedId;

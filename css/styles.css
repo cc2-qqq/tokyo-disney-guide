@@ -171,6 +171,10 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 .m-restroom { background: #1a7f37; }
 .m-baby { background: #d81b8c; }
 .m-firstaid { background: #c0392b; }
+.m-restaurant { background: #b45309; }
+.m-cafe { background: #9a3412; }
+.m-snack { background: #c2410c; }
+.m-popcorn { background: #ca8a04; }
 .marker.is-approx { opacity: .78; border-style: dashed; }
 /* Medium: solid double-ring style (not color-only); Low: dashed (is-approx). */
 .marker.is-medium { opacity: .92; border-style: solid; box-shadow: 0 0 0 2px rgba(255,255,255,.95), 0 0 0 4px rgba(26,127,55,.55); }
@@ -310,11 +314,24 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 
 /* ---------- Chips / filters ---------- */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.chips-scroll {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+.chips-scroll .chip { flex: 0 0 auto; }
 .chip {
   min-height: 40px; padding: 0 12px; border-radius: 20px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text); font-size: 13px;
 }
 .chip-on { background: var(--primary); color: #fff; border-color: var(--primary); }
+.chip-mini {
+  display: inline-block; margin: 2px 4px 0 0; padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; background: rgba(180, 83, 9, .12); color: #9a3412;
+  border: 1px solid rgba(180, 83, 9, .28);
+}
 
 /* ---------- Lists ---------- */
 .poi-list, .visit-list { list-style: none; margin: 0; padding: 0; }
@@ -331,9 +348,14 @@ main { position: absolute; inset: 0; top: var(--top-h); bottom: var(--nav-h); }
 .li-restroom { background: #1a7f37; }
 .li-babyCare { background: #d81b8c; }
 .li-firstAid, .li-emergencyFacility { background: #c0392b; }
+.li-restaurant { background: #b45309; }
 .li-body { flex: 1; min-width: 0; }
 .li-name { display: block; font-weight: 700; overflow-wrap: anywhere; }
 .li-meta { display: block; font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
+.li-summary { display: block; font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.li-chips { display: block; margin-top: 4px; }
+.menu-summary { margin: 0; padding-left: 1.1em; }
+.nearby-group { background: rgba(180, 83, 9, .06); }
 .li-height { display: block; font-size: 12px; color: var(--primary); font-weight: 700; margin-top: 2px; }
 .height-lead { margin: 6px 0; font-size: 15px; }
 .outside-choices { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }

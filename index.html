@@ -21,12 +21,12 @@
       <button data-park="TDS" type="button" aria-pressed="false">씨<span class="pt-sub">TDS</span></button>
     </div>
     <div class="search-wrap">
-      <input id="search-input" type="search" placeholder="어트랙션·화장실 검색" aria-label="검색" autocomplete="off" />
+      <input id="search-input" type="search" placeholder="어트랙션·식당·화장실 검색" aria-label="검색" autocomplete="off" />
     </div>
     <button id="loc-btn" class="topbtn" type="button" aria-label="현재 위치">
       <span aria-hidden="true">&#128205;</span>
     </button>
-    <button id="filter-btn" class="topbtn" type="button" aria-label="필터">
+    <button id="menu-btn" class="topbtn" type="button" aria-label="메뉴" aria-haspopup="true">
       <span aria-hidden="true">&#9776;</span>
     </button>
   </header>
@@ -56,9 +56,9 @@
   <nav id="bottomnav" aria-label="주요 메뉴">
     <button data-tab="map" type="button" class="nav-on"><span class="nav-ico" aria-hidden="true">&#128506;</span><span class="nav-label">지도</span></button>
     <button data-tab="attractions" type="button"><span class="nav-ico" aria-hidden="true">&#127920;</span><span class="nav-label">어트랙션</span></button>
+    <button data-tab="restaurants" type="button"><span class="nav-ico" aria-hidden="true">&#127860;</span><span class="nav-label">식당</span></button>
     <button data-tab="restrooms" type="button"><span class="nav-ico" aria-hidden="true">&#128701;</span><span class="nav-label">화장실</span></button>
     <button data-tab="favorites" type="button"><span class="nav-ico" aria-hidden="true">&#9733;</span><span class="nav-label">즐겨찾기</span></button>
-    <button data-tab="settings" type="button"><span class="nav-ico" aria-hidden="true">&#9881;</span><span class="nav-label">설정</span></button>
   </nav>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

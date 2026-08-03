@@ -3,6 +3,8 @@
 export const COORD_STATUS_LABEL = {
   // High: TDL Google-POI-derived estimates (not resurveyed GPS).
   high_estimated: '지도 자료 기반 추정 위치',
+  // Dining: cross-checked against official map + landmark/POI (still not surveyed GPS).
+  high_verified: '공식 지도·랜드마크 대조 위치',
   // Medium: official park-map + landmark estimate (TDS default visible band).
   medium_estimated: '공식 지도 기반 추정 위치',
   low_estimated: '대략적인 위치',
@@ -11,6 +13,7 @@ export const COORD_STATUS_LABEL = {
 
 export const COORD_STATUS_BADGE = {
   high_estimated: { text: '지도 기반 추정', cls: 'badge-high' },
+  high_verified: { text: '공식 지도 대조', cls: 'badge-high' },
   medium_estimated: { text: '공식 지도 기반 추정 위치', cls: 'badge-medium' },
   low_estimated: { text: '대략적인 위치', cls: 'badge-low' },
   unknown: { text: '위치 미확인', cls: 'badge-unknown' },
@@ -25,6 +28,7 @@ export const HEIGHT_MEASURE_NOTE = '현장에서는 신발을 신은 상태의 �
 // Accuracy shown by status band (avoid over-precise ±3m claims).
 export const ACCURACY_LABEL = {
   high_estimated: '약 5~10m',
+  high_verified: '약 5~15m',
   medium_estimated: '약 10~15m',
   low_estimated: '약 20~30m',
   unknown: '미확인',
@@ -37,6 +41,16 @@ export const TYPE_LABEL = {
   emergencyFacility: '응급시설',
   babyCare: '베이비케어룸·수유실',
   entrance: '입구',
+  restaurant: '식당·식음',
+};
+
+export const MEAL_TYPE_LABEL = {
+  meal: '식사',
+  light_meal: '가벼운 식사',
+  snack: '간식',
+  dessert: '디저트',
+  drink: '음료',
+  popcorn: '팝콘',
 };
 
 export const TYPE_ICON = {
@@ -45,6 +59,7 @@ export const TYPE_ICON = {
   firstAid: '\u{1F691}',
   emergencyFacility: '\u{1F691}',
   babyCare: '\u{1F476}',
+  restaurant: '\u{1F374}',
 };
 
 export function confidenceBand(score, status) {

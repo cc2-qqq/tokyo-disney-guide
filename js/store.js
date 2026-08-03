@@ -105,6 +105,7 @@ export const store = {
   normalizeFilters(raw) {
     const src = raw && typeof raw === 'object' ? raw : {};
     const attraction = src.attraction || {};
+    const restaurant = src.restaurant || {};
     let facilityByPark = src.facilityByPark;
     if (!facilityByPark || typeof facilityByPark !== 'object') {
       facilityByPark = { TDL: {}, TDS: {} };
@@ -117,7 +118,7 @@ export const store = {
         TDS: { ...(facilityByPark.TDS || {}) },
       };
     }
-    return { attraction, facilityByPark };
+    return { attraction, restaurant, facilityByPark };
   },
 
   getFacilityFilters(park) {
