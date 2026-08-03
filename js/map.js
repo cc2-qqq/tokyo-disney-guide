@@ -71,6 +71,10 @@ export function createMapController(elId) {
   };
   let currentBoundaries = null;
 
+  let compassControl = null;
+  let bearingAnim = null;
+  let rotateLabelRaf = 0;
+
   function applyBasemapStyle(parkId, theme, { fallback = false, labelMode } = {}) {
     currentParkId = parkId || currentParkId;
     currentTheme = theme || currentTheme;
@@ -135,6 +139,7 @@ export function createMapController(elId) {
     currentLabelMode = labelMode || LABEL_MODES.KO_FIRST;
     labelState.mapLabelMode = currentLabelMode;
     currentParkId = parkMeta.id || 'TDL';
+    // leaflet-rotate (vendored): rotate panes + touchRotate. No device heading tracking.
     map = L.map(elId, {
       center: parkMeta.center,
       zoom: parkMeta.defaultZoom || parkMeta.zoom,
@@ -146,6 +151,13 @@ export function createMapController(elId) {
       maxBounds: parkMeta.maxBounds ? L.latLngBounds(parkMeta.maxBounds) : undefined,
       maxBoundsViscosity: 1.0,
       bounceAtZoomLimits: false,
+      rotate: true,
+      bearing: 0,
+      touchRotate: true,
+      shiftKeyRotate: true,
+      // Built-in control cycles into device-compass mode — use our custom north button instead.
+      rotateControl: false,
+      compassBearing: false,
     });
     labelState.parkMeta = parkMeta;
 
@@ -162,8 +174,10 @@ export function createMapController(elId) {
 
     markerGroup = L.layerGroup().addTo(map);
 
-    // Boundaries below POI markers; entrances above typical markers.
-    map.createPane('boundaries');
+    // Boundaries/gate lines rotate with the map; labels stay screen-upright.
+    const rotateParent = map.getPane('rotatePane') || map.getPane('mapPane');
+    const norotateParent = map.getPane('norotatePane') || map.getPane('mapPane');
+    map.createPane('boundaries', rotateParent);
     const bp = map.getPane('boundaries');
     bp.style.zIndex = 350;
     bp.style.pointerEvents = 'none';
@@ -172,24 +186,151 @@ export function createMapController(elId) {
 
     entranceGroup = L.layerGroup().addTo(map);
 
-    // Dedicated non-interactive pane above markers for Korean text labels.
-    map.createPane('labels');
+    map.createPane('labels', norotateParent);
     const lp = map.getPane('labels');
     lp.style.zIndex = 620;
     lp.style.pointerEvents = 'none';
     labelGroup = L.layerGroup().addTo(map);
+
+    addCompassControl();
 
     map.on('zoomend moveend', () => {
       renderLabels();
       renderBoundaries();
       if (lastEntranceRender) renderEntrances(lastEntranceRender.entrances, lastEntranceRender.opts);
     });
+    map.on('rotate', onMapRotate);
     if (parkMeta.defaultBounds) {
       map.fitBounds(L.latLngBounds(parkMeta.defaultBounds), { animate: false });
     }
     // Test/debug hook: recover Leaflet instance from the container element.
     map.getContainer()._tdgMap = map;
+    syncCompassUi();
     return map;
+  }
+
+  function onMapRotate() {
+    syncCompassUi();
+    // Throttle label overlap reflow — markers update via leaflet-rotate themselves.
+    if (rotateLabelRaf) return;
+    rotateLabelRaf = requestAnimationFrame(() => {
+      rotateLabelRaf = 0;
+      renderLabels();
+    });
+  }
+
+  function syncCompassUi() {
+    if (!compassControl || !map || typeof map.getBearing !== 'function') return;
+    const bearing = map.getBearing() || 0;
+    const rotated = Math.abs(((bearing % 360) + 360) % 360) > 0.5
+      && Math.abs((((bearing % 360) + 360) % 360) - 360) > 0.5;
+    const btn = compassControl._btn;
+    const needle = compassControl._needle;
+    if (btn) {
+      btn.classList.toggle('is-rotated', rotated);
+      btn.setAttribute('aria-pressed', rotated ? 'true' : 'false');
+    }
+    // Counter-rotate so the needle keeps pointing to geographic north on screen.
+    if (needle) needle.style.transform = `rotate(${-bearing}deg)`;
+  }
+
+  function addCompassControl() {
+    const Compass = L.Control.extend({
+      options: { position: 'topleft' },
+      onAdd(m) {
+        const wrap = L.DomUtil.create('div', 'leaflet-bar leaflet-control tdg-compass');
+        const btn = L.DomUtil.create('a', 'tdg-compass-btn', wrap);
+        btn.href = '#';
+        btn.setAttribute('role', 'button');
+        btn.setAttribute('aria-label', '지도를 북쪽으로 맞추기');
+        btn.setAttribute('tabindex', '0');
+        btn.setAttribute('aria-pressed', 'false');
+        const needle = L.DomUtil.create('span', 'tdg-compass-needle', btn);
+        needle.setAttribute('aria-hidden', 'true');
+        needle.textContent = '\u2B06'; // ⬆
+        this._btn = btn;
+        this._needle = needle;
+
+        // Desktop assist: drag compass sideways to rotate (shift+wheel also works via plugin).
+        let dragStartX = null;
+        let dragStartBearing = 0;
+        let didDrag = false;
+        const onPointerDown = (e) => {
+          if (e.pointerType === 'touch') return; // mobile uses two-finger rotate
+          dragStartX = e.clientX;
+          dragStartBearing = m.getBearing();
+          didDrag = false;
+          btn.setPointerCapture?.(e.pointerId);
+          L.DomEvent.stop(e);
+        };
+        const onPointerMove = (e) => {
+          if (dragStartX == null) return;
+          const dx = e.clientX - dragStartX;
+          if (Math.abs(dx) < 3) return;
+          didDrag = true;
+          m.setBearing(dragStartBearing + dx * 0.4);
+          L.DomEvent.stop(e);
+        };
+        const onPointerUp = () => { dragStartX = null; };
+
+        L.DomEvent.disableClickPropagation(wrap);
+        L.DomEvent.on(btn, 'click', (e) => {
+          L.DomEvent.preventDefault(e);
+          L.DomEvent.stopPropagation(e);
+          if (didDrag) { didDrag = false; return; }
+          resetBearing(true);
+        });
+        L.DomEvent.on(btn, 'keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            L.DomEvent.preventDefault(e);
+            resetBearing(true);
+          }
+        });
+        L.DomEvent.on(btn, 'pointerdown', onPointerDown);
+        L.DomEvent.on(btn, 'pointermove', onPointerMove);
+        L.DomEvent.on(btn, 'pointerup', onPointerUp);
+        L.DomEvent.on(btn, 'pointercancel', onPointerUp);
+        return wrap;
+      },
+    });
+    compassControl = new Compass();
+    compassControl.addTo(map);
+  }
+
+  /** Animate bearing to north (0°). Does not persist to localStorage. */
+  function resetBearing(animate = true) {
+    if (!map || typeof map.setBearing !== 'function') return;
+    if (bearingAnim) cancelAnimationFrame(bearingAnim);
+    const start = map.getBearing() || 0;
+    const shortest = ((0 - start + 540) % 360) - 180;
+    if (!animate || Math.abs(shortest) < 0.5) {
+      map.setBearing(0);
+      syncCompassUi();
+      return;
+    }
+    const duration = Math.min(700, 280 + Math.abs(shortest) * 2);
+    const t0 = performance.now();
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / duration);
+      const eased = 1 - (1 - p) ** 3;
+      map.setBearing(start + shortest * eased);
+      if (p < 1) bearingAnim = requestAnimationFrame(step);
+      else {
+        bearingAnim = null;
+        map.setBearing(0);
+        syncCompassUi();
+      }
+    };
+    bearingAnim = requestAnimationFrame(step);
+  }
+
+  function getBearing() {
+    return (map && typeof map.getBearing === 'function') ? map.getBearing() : 0;
+  }
+
+  function setBearing(deg) {
+    if (map && typeof map.setBearing === 'function') map.setBearing(deg);
+    syncCompassUi();
   }
 
   function setPark(parkMeta) {
@@ -202,6 +343,7 @@ export function createMapController(elId) {
     map.setMinZoom(parkMeta.minZoom);
     map.setMaxZoom(parkMeta.maxZoom);
     map.setMaxBounds(parkMeta.maxBounds ? L.latLngBounds(parkMeta.maxBounds) : null);
+    resetBearing(false);
     applyBasemapStyle(currentParkId, currentTheme);
     resetView(parkMeta);
     renderBoundaries();
@@ -227,6 +369,7 @@ export function createMapController(elId) {
   function resetView(parkMeta) {
     const meta = parkMeta || labelState.parkMeta;
     if (!meta) return;
+    resetBearing(false);
     if (meta.defaultBounds) {
       map.fitBounds(L.latLngBounds(meta.defaultBounds), { animate: true });
     } else {
@@ -881,6 +1024,7 @@ export function createMapController(elId) {
     renderEntrances, setBoundaries, renderBoundaries,
     showRoute, clearRoute, showRouteDebug, clearRouteDebug, invalidate,
     setLabelSources, setLabelOptions, renderLabels,
+    getBearing, setBearing, resetBearing,
     getMap: () => map,
   };
 }
