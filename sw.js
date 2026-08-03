@@ -31,6 +31,7 @@ const SHELL = [
   './js/data/parks.js',
   './js/data/tdl.js',
   './js/data/tds.js',
+  './js/data/restaurants.js',
   './js/data/entrances.js',
   './js/data/boundaries.js',
   './js/data/parkBoundaryGeojson.js',

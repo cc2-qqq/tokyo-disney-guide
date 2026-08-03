@@ -12,6 +12,14 @@ export function matchText(poi, query) {
   const hay = [
     poi.nameKo, poi.nameJa, poi.nameEn, poi.name, poi.nameNote,
     poi.areaNameKo, poi.area, poi.googlePoiName,
+    poi.summaryKo,
+    ...(Array.isArray(poi.cuisineTags) ? poi.cuisineTags : []),
+    ...(Array.isArray(poi.representativeMenusKo) ? poi.representativeMenusKo : []),
+    poi.mealType, poi.facilityType,
+    poi.mobileOrder === true ? '모바일오더|모바일 오더|mobileorder' : '',
+    poi.childrenMenu === true ? '어린이메뉴|아이메뉴|아이 메뉴|childrenmenu' : '',
+    poi.mealType === 'popcorn' || poi.facilityType === 'popcorn_wagon' ? '팝콘|popcorn' : '',
+    poi.mealType === 'dessert' ? '디저트|dessert' : '',
   ].map(norm).join('|');
   return hay.includes(q);
 }
@@ -95,12 +103,48 @@ export function facilityVisible(poi, includeLow, parkId, { includePregate = fals
   if (poi.generalGuestAccessible === false) return false;
   // Default: paid-area only; opt-in for station/bus/taxi pregate toilets.
   if (poi.insidePaidArea === false && !includePregate) return false;
-  if (st === 'high_estimated') return true;
+  if (st === 'high_estimated' || st === 'high_verified') return true;
   if (st === 'medium_estimated') {
     if (parkId === 'TDS') return true;
     return !!includeLow;
   }
   if (st === 'low_estimated') return !!includeLow;
+  return true;
+}
+
+/** Dining visibility: low_estimated hidden unless includeLow. */
+export function restaurantVisible(poi, includeLow) {
+  if (!poi || poi.type !== 'restaurant') return false;
+  const st = poi.coordinateStatus;
+  if (st === 'unknown') return false;
+  if (poi.generalGuestAccessible === false) return false;
+  if (st === 'high_verified' || st === 'high_estimated' || st === 'medium_estimated') return true;
+  if (st === 'low_estimated') return !!includeLow;
+  return true;
+}
+
+export function restaurantMatchesFilters(poi, filters) {
+  const f = filters || {};
+  if (f.childrenMenu && poi.childrenMenu !== true) return false;
+  if (f.mobileOrder && poi.mobileOrder !== true) return false;
+  // Meal-type chips are OR within the group when several are on.
+  const mealChips = [];
+  if (f.meal) {
+    mealChips.push(poi.mealType === 'meal' || poi.mealType === 'light_meal');
+  }
+  if (f.snack) {
+    mealChips.push(poi.mealType === 'snack' || poi.facilityType === 'snack_stand' || poi.facilityType === 'food_wagon');
+  }
+  if (f.dessert) mealChips.push(poi.mealType === 'dessert');
+  if (f.drink) mealChips.push(poi.mealType === 'drink' || poi.facilityType === 'drink_stand');
+  if (f.popcorn) mealChips.push(poi.mealType === 'popcorn' || poi.facilityType === 'popcorn_wagon');
+  if (mealChips.length && !mealChips.some(Boolean)) return false;
+  if (f.noReservation && poi.reservationRequired === true) return false;
+  if (f.prioritySeating && poi.prioritySeating !== true) return false;
+  if (f.indoor) {
+    if (poi.indoorStatus !== 'indoor' && poi.indoorStatus !== 'mixed') return false;
+  }
+  if (f.alcohol && poi.alcoholAvailable !== true) return false;
   return true;
 }
 

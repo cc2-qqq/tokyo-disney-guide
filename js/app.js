@@ -1,6 +1,6 @@
 import {
-  PARKS, getPois, getAttractions, getAllAttractions, getFacilities, getPoiById, LANDMARK_ATTRACTIONS,
-  getEntrances, getMainEntrance, getParkBoundaries,
+  PARKS, getPois, getAttractions, getAllAttractions, getFacilities, getRestaurants, getPoiById,
+  LANDMARK_ATTRACTIONS, getEntrances, getMainEntrance, getParkBoundaries,
 } from './data/index.js';
 import { closureOnDate } from './labels.js';
 import { store } from './store.js';
@@ -9,8 +9,8 @@ import {
   createLocator, requestPositionOnce, haversineMeters, bearingDegrees, formatDistance, compass8,
 } from './geo.js';
 import {
-  matchText, attractionMatchesFilters, facilityMatchesFilters,
-  facilityVisible, facilityBandCounts, withDistance, sortByDistance,
+  matchText, attractionMatchesFilters, facilityMatchesFilters, restaurantMatchesFilters,
+  facilityVisible, restaurantVisible, facilityBandCounts, withDistance, sortByDistance,
   isRestroomTabFacility,
 } from './search.js';
 import {
@@ -37,11 +37,11 @@ const ROUTE_DEBUG = (() => {
 const state = {
   park: store.getPark(),
   // Panel only (sheet content). Map marker category uses layerMode.
-  tab: 'map', // map | attractions | restrooms | favorites | settings | detail | search | filter | familyNearby
+  tab: 'map', // map | attractions | restaurants | restrooms | favorites | settings | detail | search | filter | familyNearby | menu
   prevTab: 'attractions',
   // Map app-marker category (independent of open panel).
   // map = sparse default (selected / visit list); category layers toggle on demand.
-  layerMode: 'map', // map | attractions | restrooms | favorites | none
+  layerMode: 'map', // map | attractions | restaurants | restrooms | favorites | none
   // Entrance detail mode: show pregate/station + gate cues (via 근처 → 메인 입구).
   entranceDetail: false,
   query: '',
@@ -72,7 +72,7 @@ function cacheEls() {
   els.parkToggle = $('#park-toggle');
   els.search = $('#search-input');
   els.locBtn = $('#loc-btn');
-  els.filterBtn = $('#filter-btn');
+  els.menuBtn = $('#menu-btn');
   els.sheet = $('#sheet');
   els.sheetTitle = $('#sheet-title');
   els.sheetBody = $('#sheet-body');
@@ -104,16 +104,21 @@ function visibleFacilities({ restroomTabOnly = false } = {}) {
 /** Active map layer from layerMode (panel tab must not drive markers). */
 function mapCategory() {
   if (state.layerMode === 'all') return 'map'; // legacy alias → sparse map
-  return state.layerMode; // map | attractions | restrooms | favorites | none
+  return state.layerMode; // map | attractions | restaurants | restrooms | favorites | none
 }
 
 function poiMatchesCategory(poi, category = mapCategory()) {
   if (!poi) return false;
   if (category === 'map' || category === 'none') return true;
   if (category === 'attractions') return poi.type === 'attraction';
+  if (category === 'restaurants') return poi.type === 'restaurant';
   if (category === 'restrooms') return isRestroomTabFacility(poi);
   if (category === 'favorites') return store.isFavorite(poi.id);
   return true;
+}
+
+function visibleRestaurants() {
+  return getRestaurants(state.park).filter((p) => restaurantVisible(p, includeLowTrust()));
 }
 
 /** Sparse default map: selected / nav targets + visit-list stops (not every POI). */
@@ -144,6 +149,10 @@ function decorateMapPois(pois) {
   let nearestId = null;
   if (state.layerMode === 'restrooms' && state.user?.coords && isInsidePark(state.user.coords)) {
     const n = nearestFacility('restroom', state.user.coords);
+    nearestId = n?.id || null;
+  }
+  if (state.layerMode === 'restaurants' && state.user?.coords && isInsidePark(state.user.coords)) {
+    const n = nearestRestaurant(null, state.user.coords);
     nearestId = n?.id || null;
   }
   return pois.map((p) => {
@@ -179,10 +188,16 @@ function mapPois() {
     if (ff.inGateOnly == null) ff.inGateOnly = true;
     return visibleFacilities({ restroomTabOnly: true }).filter((p) => facilityMatchesFilters(p, ff));
   }
+  if (cat === 'restaurants') {
+    const rf = getFilters().restaurant || {};
+    return visibleRestaurants().filter((p) => restaurantMatchesFilters(p, rf));
+  }
   if (cat === 'favorites') {
     const fav = new Set(store.getFavorites());
     const fromPois = getPois(state.park).filter((p) => fav.has(p.id) && p.coordinates
-      && (p.type === 'attraction' || facilityVisible(p, includeLowTrust(), state.park, facilityVisibilityOpts())));
+      && (p.type === 'attraction'
+        || p.type === 'restaurant'
+        || facilityVisible(p, includeLowTrust(), state.park, facilityVisibilityOpts())));
     const fromEnt = getEntrances(state.park).filter((p) => fav.has(p.id) && p.coordinates);
     return [...fromPois, ...fromEnt];
   }
@@ -297,8 +312,8 @@ function syncEntranceAndBoundary() {
     // Compact main on normal layers; hero only in entrance mode (or when main is selected).
     heroMain: !!state.entranceDetail,
   });
-  const thin = state.layerMode === 'attractions' || state.layerMode === 'restrooms'
-    || state.layerMode === 'favorites';
+  const thin = state.layerMode === 'attractions' || state.layerMode === 'restaurants'
+    || state.layerMode === 'restrooms' || state.layerMode === 'favorites';
   // Park outline opt-in only; gate cues only while entrance detail mode is on (zoom 18+ in map.js).
   map.setBoundaries(getParkBoundaries(state.park), {
     showParkBoundaries: s.showParkBoundaries === true,
@@ -394,7 +409,8 @@ function syncLabelSources() {
     parkMeta: meta,
     areas: meta.areas,
     attractions: getAllAttractions(state.park),
-    facilities: getFacilities(state.park),
+    // Restaurants share the facility label pool (name tags for selected/direction only).
+    facilities: [...getFacilities(state.park), ...getRestaurants(state.park)],
     landmark: LANDMARK_ATTRACTIONS,
   });
 }
@@ -498,6 +514,7 @@ function getFilters() {
   const all = store.getFilters();
   return {
     attraction: all.attraction || { height: null },
+    restaurant: all.restaurant || {},
     facility: store.getFacilityFilters(state.park),
   };
 }
@@ -506,8 +523,67 @@ function setAttractionFilters(af) {
   all.attraction = af;
   store.setFilters(all);
 }
+function setRestaurantFilters(rf) {
+  const all = store.getFilters();
+  all.restaurant = rf;
+  store.setFilters(all);
+}
 function setFacilityFilters(ff) {
   store.setFacilityFilters(state.park, ff);
+}
+
+function restaurantFilterBar(f) {
+  const hasLoc = !!(state.user && state.user.coords && isInsidePark(state.user.coords));
+  return `<div class="chips chips-scroll" role="group" aria-label="식당 필터">
+    ${chip('childrenMenu', '어린이 메뉴', f.childrenMenu)}
+    ${chip('mobileOrder', '모바일 오더', f.mobileOrder)}
+    ${chip('meal', '식사', f.meal)}
+    ${chip('snack', '간식', f.snack)}
+    ${chip('nearest', '가까운 순', f.nearest && hasLoc)}
+    ${chip('dessert', '디저트', f.dessert)}
+    ${chip('drink', '음료', f.drink)}
+    ${chip('popcorn', '팝콘', f.popcorn)}
+    ${chip('noReservation', '예약 없이 이용', f.noReservation)}
+    ${chip('prioritySeating', '우선 안내', f.prioritySeating)}
+    ${chip('indoor', '실내', f.indoor)}
+    ${chip('alcohol', '주류', f.alcohol)}
+    ${chip('sortArea', '구역 순', f.sortArea)}
+    ${chip('sortName', '이름 순', f.sortName)}
+  </div>
+  ${!hasLoc ? '<p class="muted small">가까운 순은 현재 위치가 있을 때 사용할 수 있어요.</p>' : ''}`;
+}
+
+function sortRestaurants(items, f) {
+  const hasLoc = items.some((p) => p._dist != null);
+  if (f.nearest && hasLoc) return sortByDistance(items);
+  if (f.sortName) {
+    return [...items].sort((a, b) => (a.nameKo || '').localeCompare(b.nameKo || '', 'ko'));
+  }
+  // default / sortArea: area then name
+  return [...items].sort((a, b) => {
+    const aa = a.areaNameKo || a.area || '';
+    const bb = b.areaNameKo || b.area || '';
+    if (aa !== bb) return aa.localeCompare(bb, 'ko');
+    return (a.nameKo || '').localeCompare(b.nameKo || '', 'ko');
+  });
+}
+
+function renderRestaurants() {
+  const f = getFilters().restaurant || {};
+  let items = withDistance(visibleRestaurants().filter((p) => restaurantMatchesFilters(p, f)), state.user && state.user.coords);
+  if (f.nearest && !(state.user && state.user.coords)) {
+    // keep sortArea fallback when nearest requested without location
+  }
+  items = sortRestaurants(items, f);
+  const shown = items.length;
+  const all = getRestaurants(state.park).length;
+  els.sheetTitle.textContent = '식당';
+  els.sheetBody.innerHTML = `${restaurantFilterBar(f)}
+    <div class="facility-count notice">
+      <p><strong>표시 ${shown}곳</strong> · 등록 ${all}곳${includeLowTrust() ? '' : ' · 낮은 신뢰도 위치는 설정에서 켤 수 있어요'}</p>
+      <p class="small muted">메뉴·가격은 변경될 수 있어요. 상세에서 공식 메뉴를 확인해 주세요.</p>
+    </div>
+    ${ui.restaurantListHtml(items, { ...listOpts(), emptyMsg: '조건에 맞는 식당이 없습니다.' })}`;
 }
 
 function listCtx() {
@@ -651,15 +727,21 @@ function renderFavorites() {
   let body = `<h3 class="sheet-h3">즐겨찾기</h3>`;
   if (!favs.length) {
     body += `<div class="notice">
-      <p>아직 즐겨찾기한 장소가 없어요.<br/>어트랙션이나 시설 상세에서 별을 눌러 추가할 수 있어요.</p>
+      <p>아직 즐겨찾기한 장소가 없어요.<br/>어트랙션·식당·시설 상세에서 별을 눌러 추가할 수 있어요.</p>
       <button class="btn btn-primary" data-act="open-attractions" type="button">어트랙션 보기</button>
+      <button class="btn" data-act="open-restaurants" type="button">식당 보기</button>
     </div>`;
   } else {
-    body += ui.listHtml(favs, {
-      ...listOpts(),
-      isFav: () => true,
-      emptyMsg: '아직 즐겨찾기한 장소가 없어요.',
-    });
+    const favRests = favs.filter((p) => p.type === 'restaurant');
+    const favOther = favs.filter((p) => p.type !== 'restaurant');
+    if (favRests.length) body += ui.restaurantListHtml(favRests, { ...listOpts(), isFav: () => true });
+    if (favOther.length) {
+      body += ui.listHtml(favOther, {
+        ...listOpts(),
+        isFav: () => true,
+        emptyMsg: '',
+      });
+    }
   }
 
   body += `<h3 class="sheet-h3">내 방문 목록</h3>`;
@@ -879,6 +961,11 @@ function renderDetail(id) {
     html += `<div class="detail-actions">
       <button class="btn" data-act="meetup-set-poi" data-poi="${ui.esc(id)}" type="button">이 시설을 가족 집결지로</button>
     </div>`;
+  } else if (withArea.type === 'restaurant') {
+    html = ui.restaurantDetail(withArea, {
+      ...common,
+      offline: typeof navigator !== 'undefined' && navigator.onLine === false,
+    });
   } else {
     html = ui.facilityDetail(withArea, common);
     html += `<div class="detail-actions">
@@ -935,7 +1022,9 @@ function renderFamilyNearby() {
 
   let body = '';
   if (ref.mode === 'noloc') {
-    body += `<div class="notice"><p>직선거리를 보려면 현재 위치가 필요합니다. 메인 입구·집결지는 위치 없이도 열 수 있어요.</p></div>`;
+    body += `<div class="notice"><p>직선거리를 보려면 현재 위치가 필요합니다. 메인 입구·집결지는 위치 없이도 열 수 있어요.</p>
+      <p>현재 위치를 켜면 가까운 식당을 찾을 수 있어요.</p>
+      <button class="btn btn-primary" data-act="request-location" type="button">현재 위치 찾기</button></div>`;
   } else if (ref.mode === 'outside') {
     body += `<div class="notice"><p>현재 위치가 파크 밖입니다. 긴 직선거리는 표시하지 않습니다.</p>
       <button class="btn" data-act="nearby-from-entrance" type="button">정문 기준으로 거리 보기</button></div>`;
@@ -946,6 +1035,9 @@ function renderFamilyNearby() {
   const restroom = from ? nearestFacility('restroom', from) : null;
   const firstAid = from ? nearestFacility('firstAid', from) : null;
   const baby = from ? nearestFacility('baby', from) : null;
+  const nearMeals = from ? nearestRestaurants('meal', from, 3) : [];
+  const nearSnacks = from ? nearestRestaurants('snack', from, 3) : [];
+  const nearKids = from ? nearestRestaurants('children', from, 3) : [];
   const main = getMainEntrance(state.park);
   const meetup = store.getMeetup(state.park);
 
@@ -969,6 +1061,9 @@ function renderFamilyNearby() {
     mapPoi: baby?.id,
     directionPoi: baby?.id,
   });
+  body += nearbyRestaurantGroup('가까운 식당', nearMeals, from);
+  body += nearbyRestaurantGroup('가까운 간식', nearSnacks, from);
+  body += nearbyRestaurantGroup('가까운 어린이 메뉴 식당', nearKids, from);
   body += nearbyQuickRow({
     title: main ? (main.nameKo || '메인 입구') : '메인 입구',
     meta: main ? nearbyDistLabel(from, main.coordinates) : '데이터 없음',
@@ -1026,41 +1121,75 @@ function renderSearch() {
   const cat = mapCategory();
   let atts = [];
   let facs = [];
+  let rests = [];
   if (cat === 'attractions') {
     atts = getAllAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, filterCtx()));
   } else if (cat === 'restrooms') {
     facs = visibleFacilities({ restroomTabOnly: true }).filter((p) => matchText(p, q) && facilityMatchesFilters(p, getFilters().facility));
+  } else if (cat === 'restaurants') {
+    // Text search ignores list chips so queries like "라멘" still find dining.
+    rests = visibleRestaurants().filter((p) => matchText(p, q));
   } else if (cat === 'favorites') {
     const fav = new Set(store.getFavorites());
     atts = getAllAttractions(state.park).filter((p) => fav.has(p.id) && matchText(p, q));
     facs = getFacilities(state.park).filter((p) => fav.has(p.id) && matchText(p, q));
+    rests = getRestaurants(state.park).filter((p) => fav.has(p.id) && matchText(p, q));
   } else {
     atts = getAllAttractions(state.park).filter((p) => matchText(p, q) && attractionMatchesFilters(p, getFilters().attraction, filterCtx()));
     facs = visibleFacilities().filter((p) => matchText(p, q));
+    rests = visibleRestaurants().filter((p) => matchText(p, q));
   }
-  let items = withDistance([...atts, ...facs], state.user && state.user.coords);
-  if (getFilters().attraction.nearest || getFilters().facility.nearest) items = sortByDistance(items);
+  let items = withDistance([...atts, ...facs, ...rests], state.user && state.user.coords);
+  if (getFilters().attraction.nearest || getFilters().facility.nearest || getFilters().restaurant?.nearest) {
+    items = sortByDistance(items);
+  }
   items = annotateClosure(items);
+  const restItems = items.filter((p) => p.type === 'restaurant');
+  const otherItems = items.filter((p) => p.type !== 'restaurant');
   els.sheetTitle.textContent = q ? `"${q}" 검색 결과 (${items.length})` : '검색';
-  els.sheetBody.innerHTML = (q ? '' : `<p class="muted small">한국어·일본어·영어 이름, 구역, 시설 종류로 검색할 수 있어요.</p>`)
-    + ui.listHtml(items, { ...listOpts(), emptyMsg: '검색 결과가 없습니다.' });
+  let searchHtml = q ? '' : `<p class="muted small">어트랙션·식당·화장실을 한국어·일본어·영어·음식 종류로 검색할 수 있어요.</p>`;
+  if (!items.length) searchHtml += ui.emptyState('검색 결과가 없습니다.');
+  else {
+    if (restItems.length) searchHtml += ui.restaurantListHtml(restItems, listOpts());
+    if (otherItems.length) searchHtml += ui.listHtml(otherItems, listOpts());
+  }
+  els.sheetBody.innerHTML = searchHtml;
 }
 
 function renderFilter() {
   const f = getFilters();
   const forFacility = state.prevTab === 'restrooms';
+  const forRestaurant = state.prevTab === 'restaurants';
   els.sheetTitle.textContent = '필터';
-  els.sheetBody.innerHTML = `<p class="muted small">${forFacility ? '화장실·시설' : '어트랙션'} 필터</p>`
-    + (forFacility ? facilityFilterBar(f.facility) : attractionFilterBar(f.attraction));
+  let label = '어트랙션';
+  let bar = attractionFilterBar(f.attraction);
+  if (forFacility) { label = '화장실·시설'; bar = facilityFilterBar(f.facility); }
+  if (forRestaurant) { label = '식당'; bar = restaurantFilterBar(f.restaurant || {}); }
+  els.sheetBody.innerHTML = `<p class="muted small">${label} 필터</p>${bar}`;
+}
+
+function renderMenu() {
+  els.sheetTitle.textContent = '메뉴';
+  const filterHint = state.layerMode === 'restaurants' ? '식당 필터는 목록 상단에 있어요.'
+    : state.layerMode === 'restrooms' ? '화장실 필터를 열 수 있어요.'
+      : state.layerMode === 'attractions' ? '어트랙션 필터를 열 수 있어요.'
+        : '어트랙션·화장실 레이어에서 필터를 사용할 수 있어요.';
+  els.sheetBody.innerHTML = `<div class="detail-actions">
+      <button class="btn btn-primary" data-act="open-settings" type="button">설정</button>
+      <button class="btn" data-act="open-filter" type="button">필터</button>
+    </div>
+    <p class="muted small">${ui.esc(filterHint)}</p>`;
 }
 
 const RENDERERS = {
   attractions: renderAttractions,
+  restaurants: renderRestaurants,
   restrooms: renderRestrooms,
   favorites: renderFavorites,
   settings: renderSettings,
   search: renderSearch,
   filter: renderFilter,
+  menu: renderMenu,
   familyNearby: renderFamilyNearby,
 };
 
@@ -1072,7 +1201,7 @@ function renderSheet() {
 
 // ---- navigation / sheet ----
 function openSheetPanel(tab) {
-  if (['attractions', 'restrooms', 'favorites', 'settings', 'familyNearby'].includes(tab)) state.prevTab = tab;
+  if (['attractions', 'restaurants', 'restrooms', 'favorites', 'settings', 'familyNearby'].includes(tab)) state.prevTab = tab;
   state.tab = tab;
   els.sheet.classList.add('open');
   els.sheet.setAttribute('aria-hidden', 'false');
@@ -1086,7 +1215,7 @@ function openTab(tab) {
     closeSheet();
     return;
   }
-  if (['attractions', 'restrooms', 'favorites'].includes(tab)) {
+  if (['attractions', 'restaurants', 'restrooms', 'favorites'].includes(tab)) {
     state.layerMode = tab;
   }
   clearSelectionIfWrongCategory(mapCategory());
@@ -1153,8 +1282,7 @@ function syncNav() {
     const tab = b.dataset.tab;
     let on = false;
     if (tab === 'map') on = state.layerMode === 'map' || state.layerMode === 'none' || state.layerMode === 'all';
-    else if (tab === 'attractions' || tab === 'restrooms' || tab === 'favorites') on = state.layerMode === tab;
-    else if (tab === 'settings') on = state.tab === 'settings';
+    else if (tab === 'attractions' || tab === 'restaurants' || tab === 'restrooms' || tab === 'favorites') on = state.layerMode === tab;
     b.classList.toggle('nav-on', on);
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
@@ -1169,6 +1297,10 @@ function selectPoi(id) {
   }
   state.selectedId = id;
   const poi = getPoiById(state.park, id);
+  if (poi && poi.type === 'restaurant') {
+    state.layerMode = 'restaurants';
+    syncLabelSources();
+  }
   if (poi && poi.coordinates) map.focusPoi(poi.coordinates, 17);
   // Re-render so selected marker gets name label + family badge; aux entrances expand label.
   renderMap();
@@ -1215,7 +1347,8 @@ function setPark(p) {
   syncLabelSources();
   syncLabelOptions();
   if (state.tab === 'detail') {
-    if (state.layerMode === 'attractions' || state.layerMode === 'restrooms' || state.layerMode === 'favorites') {
+    if (state.layerMode === 'attractions' || state.layerMode === 'restaurants'
+      || state.layerMode === 'restrooms' || state.layerMode === 'favorites') {
       openSheetPanel(state.layerMode);
     } else {
       closeSheet();
@@ -1611,6 +1744,25 @@ function toggleAttractionFilter(key) {
   setAttractionFilters(f);
 }
 
+function toggleRestaurantFilter(key) {
+  const f = { ...(getFilters().restaurant || {}) };
+  const hasLoc = !!(state.user && state.user.coords && isInsidePark(state.user.coords));
+  if (key === 'nearest' && !hasLoc) {
+    toast('가까운 순은 현재 위치가 필요해요');
+    return;
+  }
+  if (key === 'sortArea' || key === 'sortName' || key === 'nearest') {
+    const on = !f[key];
+    f.nearest = false;
+    f.sortArea = false;
+    f.sortName = false;
+    if (on) f[key] = true;
+  } else {
+    f[key] = !f[key];
+  }
+  setRestaurantFilters(f);
+}
+
 function applyFamilyQuickAction(action) {
   const next = applyFamilyQuick(getFilters().attraction, action, store.getChildren());
   if (action === 'excludeClosed') {
@@ -1735,6 +1887,55 @@ function nearestFacility(kind, from) {
     if (d < bestD) { bestD = d; best = p; }
   }
   return best;
+}
+
+function nearestRestaurants(kind, from, limit = 3) {
+  if (!from) return [];
+  let pool = visibleRestaurants();
+  if (kind === 'meal') {
+    pool = pool.filter((p) => p.mealType === 'meal' || p.mealType === 'light_meal');
+  } else if (kind === 'snack') {
+    pool = pool.filter((p) => p.mealType === 'snack' || p.mealType === 'dessert' || p.mealType === 'popcorn'
+      || p.facilityType === 'snack_stand' || p.facilityType === 'food_wagon' || p.facilityType === 'popcorn_wagon');
+  } else if (kind === 'children') {
+    pool = pool.filter((p) => p.childrenMenu === true);
+  }
+  return withDistance(pool, from)
+    .filter((p) => p._dist != null)
+    .sort((a, b) => a._dist - b._dist)
+    .slice(0, limit);
+}
+
+function nearestRestaurant(kind, from) {
+  return nearestRestaurants(kind, from, 1)[0] || null;
+}
+
+function nearbyRestaurantGroup(title, list, from) {
+  if (!from) {
+    return `<li class="nearby-item nearby-group">
+      <div class="nearby-main">
+        <strong class="nearby-name">${ui.esc(title)}</strong>
+        <span class="li-meta">현재 위치를 켜면 가까운 식당을 찾을 수 있어요.</span>
+      </div>
+      <div class="nearby-actions">
+        <button class="btn btn-primary" data-act="request-location" type="button">현재 위치 찾기</button>
+      </div>
+    </li>`;
+  }
+  if (!list.length) {
+    return nearbyQuickRow({ title, meta: '근처에 없음' });
+  }
+  let html = `<li class="nearby-item nearby-group"><div class="nearby-main"><strong class="nearby-name">${ui.esc(title)}</strong></div></li>`;
+  for (const p of list) {
+    const cuisine = (p.cuisineTags || []).slice(0, 2).join(' · ') || (p.summaryKo || '');
+    html += nearbyQuickRow({
+      title: p.nameKo || p.name,
+      meta: `${cuisine}${p._dist != null ? ` · ${formatDistance(p._dist)}` : ''}`,
+      mapPoi: p.id,
+      directionPoi: p.id,
+    });
+  }
+  return html;
 }
 
 function jumpNearest(kind) {
@@ -1964,12 +2165,14 @@ function bindEvents() {
     });
   }
 
-  els.filterBtn.addEventListener('click', () => {
-    if (state.tab === 'filter') {
-      if (state.prevTab && state.prevTab !== 'filter') openSheetPanel(state.prevTab);
-      else closeSheet();
-    } else openSheetPanel('filter');
-  });
+  if (els.menuBtn) {
+    els.menuBtn.addEventListener('click', () => {
+      if (state.tab === 'menu') {
+        if (state.prevTab && state.prevTab !== 'menu') openSheetPanel(state.prevTab);
+        else closeSheet();
+      } else openSheetPanel('menu');
+    });
+  }
 
   els.search.addEventListener('input', (e) => {
     state.query = e.target.value.trim();
@@ -1995,7 +2198,10 @@ function bindEvents() {
     if (filterBtn) {
       const key = filterBtn.dataset.filter;
       const forFacility = state.tab === 'restrooms' || (state.tab === 'filter' && state.prevTab === 'restrooms');
-      if (forFacility) toggleFacilityFilter(key); else toggleAttractionFilter(key);
+      const forRestaurant = state.tab === 'restaurants' || (state.tab === 'filter' && state.prevTab === 'restaurants');
+      if (forFacility) toggleFacilityFilter(key);
+      else if (forRestaurant) toggleRestaurantFilter(key);
+      else toggleAttractionFilter(key);
       renderSheet();
       renderMap();
       return;
@@ -2065,6 +2271,19 @@ function bindEvents() {
       }
       if (a === 'open-attractions') openTab('attractions');
       if (a === 'open-restrooms') openTab('restrooms');
+      if (a === 'open-restaurants') openTab('restaurants');
+      if (a === 'open-settings') openSheetPanel('settings');
+      if (a === 'open-filter') openSheetPanel('filter');
+      if (a === 'focus-map') {
+        const p = getPoiById(state.park, id);
+        if (p && p.type === 'restaurant') state.layerMode = 'restaurants';
+        if (p && p.coordinates) {
+          map.focusPoi(p.coordinates, 17);
+          renderMap();
+          syncLabelOptions();
+          toast('지도에서 위치를 표시했어요');
+        }
+      }
       if (a === 'focus-entrance') {
         const ent = getPoiById(state.park, id);
         if (ent && ent.coordinates) {

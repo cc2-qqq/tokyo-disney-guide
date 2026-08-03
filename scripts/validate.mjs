@@ -1,5 +1,7 @@
 // Data validation for TDL/TDS POIs + walk graphs + park bounds. Run: npm run validate
-import { PARK_IDS, PARKS, getPois, getEntrances, getParkBoundaries } from '../js/data/index.js';
+import {
+  PARK_IDS, PARKS, getPois, getRestaurants, getEntrances, getParkBoundaries, RESTAURANT_AUDIT,
+} from '../js/data/index.js';
 import { TDL_WALK_GRAPH } from '../js/data/routes/tdlWalkGraph.js';
 import { TDS_WALK_GRAPH } from '../js/data/routes/tdsWalkGraph.js';
 import {
@@ -69,8 +71,42 @@ for (const parkId of PARK_IDS) {
       warn(`${tag}: coordinateVerified 는 정책상 false 여야 함 (현재 ${p.coordinateVerified})`);
     }
 
-    if ((status === 'high_estimated' || status === 'medium_estimated') && !p.evidence && p.type !== 'attraction') {
+    if ((status === 'high_estimated' || status === 'high_verified' || status === 'medium_estimated')
+      && !p.evidence && p.type !== 'attraction') {
       err(`${tag}: ${status} 인데 evidence 없음`);
+    }
+
+    if (p.type === 'restaurant') {
+      const FACILITY_TYPE_OK = new Set([
+        'restaurant', 'quick_service', 'cafe', 'snack_stand', 'food_wagon', 'popcorn_wagon', 'drink_stand',
+      ]);
+      const MEAL_OK = new Set(['meal', 'light_meal', 'snack', 'dessert', 'drink', 'popcorn']);
+      const COORD_OK = new Set(['high_verified', 'medium_estimated', 'low_estimated', 'unknown']);
+      const BOOL_FIELDS = [
+        'mobileOrder', 'prioritySeating', 'reservationRequired', 'childrenMenu',
+        'specialDietaryMenu', 'plantBasedMenu', 'alcoholAvailable',
+      ];
+      if (!p.nameKo || !p.nameJa || !p.nameEn) err(`${tag}: 식당명 한·일·영 필드 누락`);
+      if (!p.area) err(`${tag}: area 누락`);
+      if (!FACILITY_TYPE_OK.has(p.facilityType)) err(`${tag}: facilityType 오류 '${p.facilityType}'`);
+      if (!MEAL_OK.has(p.mealType)) err(`${tag}: mealType 오류 '${p.mealType}'`);
+      if (!COORD_OK.has(status)) err(`${tag}: coordinateStatus 오류 '${status}'`);
+      if (!p.checkedAt) err(`${tag}: checkedAt 누락`);
+      if (!Array.isArray(p.representativeMenusKo) || p.representativeMenusKo.length < 1) {
+        err(`${tag}: representativeMenusKo 배열 필요`);
+      }
+      for (const bf of BOOL_FIELDS) {
+        if (p[bf] != null && typeof p[bf] !== 'boolean') err(`${tag}: ${bf}는 boolean|null 이어야 함`);
+      }
+      for (const urlKey of ['officialRestaurantUrl', 'officialMenuUrl']) {
+        const u = p[urlKey];
+        if (u != null && typeof u === 'string' && u && !/^https:\/\/www\.tokyodisneyresort\.jp\//.test(u)) {
+          err(`${tag}: ${urlKey} 공식 도메인 형식 아님`);
+        }
+      }
+      if (status === 'low_estimated' && p._forceDefaultVisible === true) {
+        err(`${tag}: low_estimated 인데 기본 강제 표시 플래그`);
+      }
     }
 
     if (FACILITY_TYPES.has(p.type)) {
@@ -151,13 +187,21 @@ for (const parkId of PARK_IDS) {
     // Park maxBounds containment for attractions + high facilities
     if (meta.maxBounds && coords) {
       if (!inBounds(coords, meta.maxBounds)) {
-        if (p.type === 'attraction' || status === 'high_estimated') {
+        if (p.type === 'attraction' || status === 'high_estimated' || status === 'high_verified') {
           err(`${tag}: park maxBounds 밖 (${coords})`);
         } else {
           warn(`${tag}: park maxBounds 밖 (${coords})`);
         }
       }
     }
+  }
+
+  // Restaurant audit counts (informational)
+  {
+    const rests = getRestaurants(parkId);
+    const popcorn = rests.filter((r) => r.isPopcornOrWagon).length;
+    const lowHidden = rests.filter((r) => r.coordinateStatus === 'low_estimated').length;
+    console.log(`[${parkId}] 식당 ${rests.length}곳 (팝콘·왜건 ${popcorn} · low_estimated 기본숨김 ${lowHidden})`);
   }
 
   // Park bounds sanity
@@ -430,6 +474,16 @@ function validateGuestAreaOutline(parkId, b, pois, ents) {
   if (attrOut === 0 && rrOut === 0) {
     // keep quiet on success counts; summary printed below
   }
+}
+
+if (RESTAURANT_AUDIT) {
+  console.log('\n--- 식당 감사 요약 ---');
+  console.log(`공식 목록(EN 집계): TDL ${RESTAURANT_AUDIT.officialListCounts?.TDL} · TDS ${RESTAURANT_AUDIT.officialListCounts?.TDS}`);
+  console.log(`앱 등록: TDL ${RESTAURANT_AUDIT.tdlRegistered} · TDS ${RESTAURANT_AUDIT.tdsRegistered}`);
+  console.log(`팝콘·왜건: TDL ${RESTAURANT_AUDIT.tdlPopcornWagon} · TDS ${RESTAURANT_AUDIT.tdsPopcornWagon}`);
+  console.log('좌표 신뢰도', JSON.stringify(RESTAURANT_AUDIT.byCoordinateStatus));
+  console.log(`어린이메뉴 ${RESTAURANT_AUDIT.childrenMenuTrue} · 모바일오더 ${RESTAURANT_AUDIT.mobileOrderTrue} · 우선안내 ${RESTAURANT_AUDIT.prioritySeatingTrue}`);
+  console.log(`제외 ${RESTAURANT_AUDIT.excluded?.length || 0}건`);
 }
 
 console.log(`검사한 POI 수: ${total}`);

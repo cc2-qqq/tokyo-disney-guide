@@ -1,7 +1,7 @@
 // HTML template helpers (return strings; app.js injects + wires events).
 import {
   COORD_STATUS_LABEL, COORD_STATUS_BADGE, ACCURACY_LABEL,
-  TYPE_LABEL, confidenceBand, rideEligibility, heightTierLabel,
+  TYPE_LABEL, MEAL_TYPE_LABEL, confidenceBand, rideEligibility, heightTierLabel,
   heightStatusOf, closureOnDate, formatDateKo, HEIGHT_MEASURE_NOTE,
   MEDIUM_ESTIMATE_DETAIL_NOTE,
 } from './labels.js';
@@ -17,7 +17,61 @@ export function esc(s) {
 const TYPE_MARK = {
   attraction: '\u{1F3A0}', restroom: 'WC', firstAid: '\u271A',
   emergencyFacility: '\u271A', babyCare: '\u{1F476}', entrance: '入',
+  restaurant: '\u{1F374}',
 };
+
+const MENU_CHANGE_NOTE = '메뉴·가격·판매 기간은 변경될 수 있습니다. 최신 정보는 공식 메뉴를 확인해 주세요.';
+const HOURS_NOTE = '운영시간은 공식 앱에서 확인';
+
+function restaurantBadges(poi) {
+  const chips = [];
+  if (poi.childrenMenu === true) chips.push('아이 메뉴');
+  if (poi.mobileOrder === true) chips.push('모바일 오더');
+  if (poi.mealType === 'snack' || poi.facilityType === 'snack_stand' || poi.facilityType === 'food_wagon') chips.push('간단히 먹기');
+  if (poi.serviceStyle === 'table_service' || poi.seatingType === 'table') chips.push('앉아서 식사');
+  if (poi.mealType === 'dessert') chips.push('디저트');
+  if (poi.mealType === 'popcorn' || poi.facilityType === 'popcorn_wagon') chips.push('팝콘');
+  if (poi.prioritySeating === true) chips.push('우선 안내');
+  if (poi.reservationRequired === true) chips.push('예약 필요');
+  return chips;
+}
+
+export function restaurantListItem(poi, { distance, isFav, isDone } = {}) {
+  const name = esc(poi.nameKo || poi.name);
+  const area = esc(poi.areaNameKo || '');
+  const cuisine = (poi.cuisineTags || []).slice(0, 2).join(' · ');
+  const meal = MEAL_TYPE_LABEL[poi.mealType] || '식음';
+  const summary = esc(poi.summaryKo || '');
+  const badges = restaurantBadges(poi)
+    .slice(0, 3)
+    .map((t) => `<span class="chip-mini">${esc(t)}</span>`)
+    .join('');
+  const dist = distance != null ? `<span class="li-dist">${esc(formatDistance(distance))}</span>` : '';
+  const favMark = isFav ? '<span class="li-fav" aria-label="즐겨찾기됨">\u2605</span>' : '';
+  const doneMark = isDone ? '<span class="li-done" aria-label="완료">\u2713</span>' : '';
+  return `
+    <li>
+      <button class="li" data-poi="${esc(poi.id)}" type="button">
+        <span class="li-mark li-restaurant" aria-hidden="true">${TYPE_MARK.restaurant}</span>
+        <span class="li-body">
+          <span class="li-name">${name} ${favMark}${doneMark}</span>
+          <span class="li-meta">${area}${area && cuisine ? ' · ' : ''}${esc(cuisine)}${(area || cuisine) ? ' · ' : ''}${esc(meal)}</span>
+          ${summary ? `<span class="li-summary">${summary}</span>` : ''}
+          ${badges ? `<span class="li-chips">${badges}</span>` : ''}
+        </span>
+        <span class="li-right">${dist}${badge(poi)}</span>
+      </button>
+    </li>`;
+}
+
+export function restaurantListHtml(pois, opts = {}) {
+  if (!pois.length) return emptyState(opts.emptyMsg || '표시할 식당이 없습니다.');
+  return `<ul class="poi-list">${pois.map((p) => restaurantListItem(p, {
+    distance: p._dist,
+    isFav: opts.isFav && opts.isFav(p.id),
+    isDone: opts.isDone && opts.isDone(p.id),
+  })).join('')}</ul>`;
+}
 
 function badge(poi) {
   const b = COORD_STATUS_BADGE[poi.coordinateStatus] || COORD_STATUS_BADGE.unknown;
@@ -340,6 +394,83 @@ export function facilityDetail(poi, { isFav, inVisit, distance, userCoords, dire
       ${poi.evidence ? `<div class="detail-grid"><div class="dg-k">위치 확인 근거</div><div class="dg-v">${esc(poi.evidence)}</div></div>` : ''}
       ${routeCard(routeInfo, poi.id)}
       ${directionCard(direction)}
+      ${actionRow(poi, { isFav, inVisit }, true, !!canWalkRoute)}
+      ${poi.notes ? `<p class="detail-note">${esc(poi.notes)}</p>` : ''}
+    </div>`;
+}
+
+function ynKo(v) {
+  if (v === true) return '있음';
+  if (v === false) return '없음';
+  return '확인 필요';
+}
+
+export function restaurantDetail(poi, {
+  isFav, inVisit, distance, direction, routeInfo, canWalkRoute, offline = false,
+} = {}) {
+  const menus = (poi.representativeMenusKo || []).map((m) => `<li>${esc(m)}</li>`).join('');
+  const cuisine = (poi.cuisineTags || []).join(' · ');
+  const meal = MEAL_TYPE_LABEL[poi.mealType] || '식음';
+  const indoorLabel = poi.indoorStatus === 'indoor' ? '실내'
+    : poi.indoorStatus === 'outdoor' ? '야외'
+      : poi.indoorStatus === 'mixed' ? '실내·야외 혼합'
+        : '확인 필요';
+  const rows = [
+    ['구역', poi.areaNameKo || ''],
+    ['구분', meal],
+    ['음식 종류', cuisine || '—'],
+    ['서비스', poi.serviceStyle === 'table_service' ? '테이블 서비스'
+      : poi.serviceStyle === 'counter_service' ? '카운터 서비스'
+        : poi.serviceStyle === 'window_service' ? '윈도우 서비스'
+          : poi.serviceStyle === 'wagon' ? '왜건' : '확인 필요'],
+    ['모바일 오더', ynKo(poi.mobileOrder)],
+    ['어린이 메뉴', ynKo(poi.childrenMenu)],
+    ['우선 안내', ynKo(poi.prioritySeating)],
+    ['예약 필요', ynKo(poi.reservationRequired)],
+    ['좌석', indoorLabel],
+    ['운영시간', HOURS_NOTE],
+    ['확인일', poi.checkedAt || '—'],
+  ];
+  const grid = rows.map(([k, v]) => `<div class="dg-k">${esc(k)}</div><div class="dg-v">${esc(v)}</div>`).join('');
+  const distLine = distance != null
+    ? `<div class="dg-k">현재 위치에서</div><div class="dg-v">직선거리 ${esc(formatDistance(distance))}</div>` : '';
+  const offlineNote = offline
+    ? '<p class="detail-note">인터넷 연결 후 공식 메뉴를 확인할 수 있어요.</p>'
+    : '';
+  const menuBtn = (!offline && poi.officialMenuUrl)
+    ? `<a class="btn btn-primary" href="${esc(poi.officialMenuUrl)}" target="_blank" rel="noopener noreferrer">공식 메뉴 보기</a>`
+    : '';
+  const infoBtn = (!offline && poi.officialRestaurantUrl)
+    ? `<a class="btn" href="${esc(poi.officialRestaurantUrl)}" target="_blank" rel="noopener noreferrer">공식 식당 정보</a>`
+    : '';
+  const badgeHtml = restaurantBadges(poi)
+    .map((t) => `<span class="chip-mini">${esc(t)}</span>`)
+    .join('');
+  return `
+    <div class="detail">
+      <div class="detail-head">
+        <span class="li-mark li-restaurant" aria-hidden="true">${TYPE_MARK.restaurant}</span>
+        <div>
+          <h2 class="detail-title">${esc(poi.nameKo || poi.name)}</h2>
+          <p class="detail-sub">${esc(poi.nameJa || '')}${poi.nameEn ? ` · ${esc(poi.nameEn)}` : ''}</p>
+        </div>
+      </div>
+      ${badgeHtml ? `<div class="li-chips" style="margin-bottom:8px">${badgeHtml}</div>` : ''}
+      <p class="detail-note">${esc(poi.summaryKo || '')}</p>
+      ${menus ? `<div class="detail-grid"><div class="dg-k">대표 메뉴</div><div class="dg-v"><ul class="menu-summary">${menus}</ul></div></div>` : ''}
+      <div class="detail-grid">${grid}${distLine}</div>
+      <p class="detail-note"><strong>${esc(MENU_CHANGE_NOTE)}</strong></p>
+      ${offlineNote}
+      ${confChip(poi)}
+      ${poi.coordinateStatus === 'medium_estimated' ? `<p class="detail-note">${esc(MEDIUM_ESTIMATE_DETAIL_NOTE)}</p>` : ''}
+      ${poi.evidence ? `<div class="detail-grid"><div class="dg-k">위치 확인 근거</div><div class="dg-v">${esc(poi.evidence)}</div></div>` : ''}
+      ${routeCard(routeInfo, poi.id)}
+      ${directionCard(direction)}
+      <div class="detail-actions">
+        ${menuBtn}
+        ${infoBtn}
+        <button class="btn" data-act="focus-map" data-poi="${esc(poi.id)}" type="button">지도에서 보기</button>
+      </div>
       ${actionRow(poi, { isFav, inVisit }, true, !!canWalkRoute)}
       ${poi.notes ? `<p class="detail-note">${esc(poi.notes)}</p>` : ''}
     </div>`;
